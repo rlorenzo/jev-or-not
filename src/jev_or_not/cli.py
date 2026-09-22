@@ -2,6 +2,8 @@ import typer
 
 from jev_or_not import catalog as catalog_module
 from jev_or_not import download as download_module
+from jev_or_not import enroll as enroll_module
+from jev_or_not import extract as extract_module
 from jev_or_not import pilot as pilot_module
 from jev_or_not import scorecard as scorecard_module
 from jev_or_not import transcribe as transcribe_module
@@ -111,8 +113,78 @@ def transcribe_cmd(
         typer.echo(f"  FAILED {r['episode_label']} ({r['candidate']}): {r['reason']}")
 
 
+def _enroll_progress(r: dict) -> None:
+    """One line per transcript as it finishes."""
+    who = f"{r['episode_label']} ({r['candidate']})"
+    if r["status"] == "success":
+        typer.echo(f"{who}: {r['wall_s']:.1f}s wall")
+    elif r["status"] == "failed":
+        typer.echo(f"{who}: FAILED ({r['reason']})")
+    else:
+        typer.echo(f"{who}: skipped ({r['reason']})")
+
+
+@app.command("enroll")
+def enroll_cmd(
+    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
+    floor: float = typer.Option(enroll_module.DEFAULT_FLOOR, "--floor"),
+    margin: float = typer.Option(enroll_module.DEFAULT_MARGIN, "--margin"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Speaker enrollment (PLAN.md Phase 2): label transcript clusters JOHN/JASON/GUEST/UNKNOWN."""
+    summary = enroll_module.run(
+        candidate=candidate,
+        episodes_arg=episodes,
+        floor=floor,
+        margin=margin,
+        force=force,
+        on_result=_enroll_progress,
+    )
+    typer.echo(
+        f"enroll: {summary['success']} succeeded, {summary['skipped']} skipped, "
+        f"{summary['failed']} failed of {summary['transcripts']} transcripts; "
+        f"index: {summary['index_path']} ({summary['index_rows']} rows); "
+        f"unknown speech: {summary['total_unknown_speech_s']:.1f}s"
+    )
+    for r in summary["failures"]:
+        typer.echo(f"  FAILED {r['episode_label']} ({r['candidate']}): {r['reason']}")
+
+
+extract_app = typer.Typer(no_args_is_help=True)
+app.add_typer(extract_app, name="extract")
+
+
+@extract_app.command("prepare")
+def extract_prepare_cmd(
+    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    model: str = typer.Option(..., "--model", help="sonnet or haiku"),
+    episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
+) -> None:
+    """Phase 3: write extraction packets for a Claude Code subagent to read."""
+    summary = extract_module.prepare(candidate, model, episodes_arg=episodes)
+    typer.echo(f"extract prepare: {len(summary['packets'])} packets written")
+    for p in summary["packets"]:
+        typer.echo(f"  {p}")
+
+
+@extract_app.command("ingest")
+def extract_ingest_cmd(
+    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    model: str = typer.Option(..., "--model", help="sonnet or haiku"),
+) -> None:
+    """Phase 3: validate subagent output.json packets and append accepted rulings."""
+    summary = extract_module.ingest(candidate, model)
+    typer.echo(
+        f"extract ingest: {summary['success']} succeeded, {summary['skipped']} skipped, "
+        f"{summary['failed']} failed; verdicts: {summary['verdicts_path']} "
+        f"({summary['verdicts_rows']} rows)"
+    )
+    for r in summary["failures"]:
+        typer.echo(f"  FAILED {r['episode_id']} ({r['candidate']}/{r['model']}): {r['error']}")
+
+
 for _name in (
-    "extract",
     "questions",
     "rubrics",
     "predict",

@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+
 from transcription_worker import ffmpeg
 from transcription_worker.__main__ import main, validate_request, verify_audio_hash
 from transcription_worker.assign import assign_word_cluster, build_segments
@@ -17,6 +18,12 @@ from transcription_worker.enroll import (
     assign_hosts,
     longest_stretch,
     reserved_episodes,
+)
+from transcription_worker.enroll_apply import (
+    apply_labels,
+    enrollment_hash,
+    load_host_embeddings,
+    write_host_embeddings,
 )
 
 
@@ -198,6 +205,69 @@ def test_reserved_episodes_comes_from_the_gold_files() -> None:
     assert 3 not in reserved  # the episode enrollment actually used
 
 
+def test_apply_labels_propagates_cluster_to_segments_and_words() -> None:
+    transcript = {
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "cluster": "SPEAKER_00",
+                "text": "hi",
+                "words": [{"start": 0.0, "end": 0.5, "text": "hi", "cluster": "SPEAKER_00"}],
+            },
+            {
+                "start": 1.0,
+                "end": 2.0,
+                "cluster": None,  # diarization never assigned this segment a cluster
+                "text": "??",
+                "words": [{"start": 1.0, "end": 1.5, "text": "??", "cluster": None}],
+            },
+        ]
+    }
+    cluster_results = {
+        "SPEAKER_00": {"label": "JOHN", "similarity": 0.9, "margin": 0.3, "per_host": {}},
+    }
+
+    out = apply_labels(transcript, cluster_results)
+
+    assert out["segments"][0]["speaker"] == "JOHN"
+    assert out["segments"][0]["words"][0]["speaker"] == "JOHN"
+    assert out["segments"][1]["speaker"] == "UNKNOWN"  # null cluster -> UNKNOWN
+    assert out["segments"][1]["words"][0]["speaker"] == "UNKNOWN"
+    assert "speaker" not in transcript["segments"][0]  # apply_labels does not mutate input
+
+
+def test_enrollment_hash_is_order_sensitive_and_deterministic() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        a, b, e = tmp / "a.wav", tmp / "b.wav", tmp / "enrollment.json"
+        a.write_bytes(b"AAAA")
+        b.write_bytes(b"BBBB")
+        e.write_text("{}")
+
+        h1 = enrollment_hash(str(a), str(b), str(e))
+        h2 = enrollment_hash(str(a), str(b), str(e))
+        h3 = enrollment_hash(str(b), str(a), str(e))
+
+        assert h1 == h2  # deterministic
+        assert h1 != h3  # order-sensitive
+
+
+def test_host_embeddings_round_trip() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "enrollment_embeddings.json")
+        john = np.array([0.1, 0.2, 0.3])
+        jason = np.array([0.4, 0.5, -0.6])
+
+        write_host_embeddings(path, "deadbeef" * 8, "test-model", {"john": john, "jason": jason})
+        loaded_hosts, loaded_hash = load_host_embeddings(path)
+
+        assert loaded_hash == "deadbeef" * 8
+        assert set(loaded_hosts) == {"john", "jason"}
+        assert np.allclose(loaded_hosts["john"], john)
+        assert np.allclose(loaded_hosts["jason"], jason)
+
+
 def demo() -> None:
     test_validate_request()
     test_assign_word_cluster()
@@ -209,6 +279,9 @@ def demo() -> None:
     test_assign_hosts()
     test_ffmpeg_to_wav_argv()
     test_reserved_episodes_comes_from_the_gold_files()
+    test_apply_labels_propagates_cluster_to_segments_and_words()
+    test_enrollment_hash_is_order_sensitive_and_deterministic()
+    test_host_embeddings_round_trip()
 
 
 if __name__ == "__main__":

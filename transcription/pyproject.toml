@@ -21,3 +21,7 @@ transcription-worker = "transcription_worker.__main__:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+extend = "../pyproject.toml"
+target-version = "py312"  # PEP 758 except-without-parens is 3.14-only; keep tuples here

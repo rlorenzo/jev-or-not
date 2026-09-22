@@ -132,6 +132,38 @@ class TranscriptIndexEntry(Record):
     created_at: str
 
 
+class EnrolledClusterSummary(BaseModel):
+    """One diarization cluster's enrollment outcome, nested inside
+    ``EnrolledIndexEntry``."""
+
+    id: str
+    label: Literal["JOHN", "JASON", "GUEST", "UNKNOWN"]
+    similarity: float | None
+    margin: float | None
+    speech_s: float
+
+
+class EnrolledIndexEntry(Record):
+    """One successful (episode, candidate) speaker-enrollment application
+    (PLAN.md Phase 2 Output items 2-3). No transcript text here -- see
+    ``jev_or_not.enroll.export_index``.
+    """
+
+    episode_id: str
+    episode_label: str
+    candidate: Literal["A", "B"]
+    enrolled_path: str
+    enrolled_hash: str
+    transcript_hash: str
+    fingerprint: str
+    floor: float
+    margin: float
+    thresholds_status: Literal["provisional", "frozen"]
+    clusters: list[EnrolledClusterSummary]
+    unknown_speech_s: float
+    created_at: str
+
+
 class AudioManifestEntry(Record):
     """One downloaded episode audio file (PLAN.md Phase 1 step 5).
 
@@ -152,3 +184,55 @@ class AudioManifestEntry(Record):
     duration_mismatch: bool
     downloaded_at: str
     status: str
+
+
+class EvidenceQuote(BaseModel):
+    """One evidence quote backing a ruling (PLAN.md Phase 3): under 15
+    whitespace-delimited words, with its transcript timestamps."""
+
+    quote: str
+    start_s: float
+    end_s: float
+
+    @field_validator("quote")
+    @classmethod
+    def _short_quote(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("quote must not be empty")
+        if len(v.split()) >= 15:
+            raise ValueError("quote must be under 15 whitespace-delimited words")
+        return v
+
+    @field_validator("end_s")
+    @classmethod
+    def _end_after_start(cls, v: float, info: Any) -> float:
+        start = info.data.get("start_s")
+        if start is not None and v <= start:
+            raise ValueError("end_s must be greater than start_s")
+        return v
+
+
+class Ruling(Record):
+    """One extracted verdict (PLAN.md Phase 3 output schema, ``data/verdicts.jsonl``).
+
+    Produced only by ``jev_or_not.extract.ingest`` from a Claude Code
+    subagent's validated ``output.json``; never written by hand.
+    """
+
+    episode_id: str
+    episode: int | None
+    ruling_id: str
+    subject: str
+    category: str
+    question_as_posed: str
+    verdict: Literal["yes", "no", "ambiguous", "no_ruling"]
+    verdict_strength: Literal["firm", "hedged", "reversed_during_episode"] | None
+    evidence_quotes: list[EvidenceQuote]
+    reasoning_summary: str
+    extractor_model: str
+    prompt_version: str
+    extractor_confidence: float
+    transcript_hash: str
+    speaker_override_hash: str | None
+    reference_version: str | None
+    review_status: str

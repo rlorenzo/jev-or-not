@@ -33,7 +33,7 @@
     "SPEAKER_01": "john",
     "SPEAKER_00": "jason"
   },
-  "thresholds": null,
+  "thresholds": {"floor": 0.6, "margin": 0.15, "status": "provisional"},
   "created_at": "2026-09-22T09:22:30.204374+00:00",
   "confirmed_at": "2026-09-22T14:51:12.994189+00:00"
 }
