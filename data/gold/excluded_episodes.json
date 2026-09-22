@@ -1,0 +1,19 @@
+{
+  "policy": "Exclude episodes with no clear single topic that the host's ruling relies on (compilations, live grab-bag specials). Applied by hand in Phase 0; a systematic pass over catalog descriptions runs in Phase 1.",
+  "excluded": [
+    {
+      "episode": 0,
+      "episode_id": "theincomparable/robot/0",
+      "reason": "\"0: Origin\" is a compilation of rulings that were re-ruled in their own later episodes; a majority of its subjects repeat elsewhere in the scorecard.",
+      "decided_by": "Rex Lorenzo",
+      "decided_at": "2026-09-22T05:43:47Z"
+    },
+    {
+      "episode": 297,
+      "episode_id": "theincomparable/robot/297",
+      "reason": "Live Relay Podcastathon special: a grab-bag of questions from the list (all-in-one computers, dates, pasta, antique vs. retro) with no single topic the ruling rests on.",
+      "decided_by": "Rex Lorenzo",
+      "decided_at": "2026-09-22T05:44:53Z"
+    }
+  ]
+}

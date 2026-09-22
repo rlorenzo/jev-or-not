@@ -1,0 +1,48 @@
+[project]
+name = "jev-or-not"
+version = "0.1.0"
+description = "Robot or Not vs. Jev: reproducible evaluation of TypeSafe AI's Jev against John Siracusa's rulings."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2",
+    "httpx>=0.27",
+    "defusedxml>=0.7.1",
+]
+
+[project.scripts]
+jev-or-not = "jev_or_not.cli:app"
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.1",
+    "pre-commit>=4.6.2",
+    "pytest>=8",
+    "ruff>=0.16.8",
+    "vulture>=2.16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jev_or_not"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.vulture]
+paths = ["src", "tests"]
+min_confidence = 80
+ignore_names = ["force", "cls"]  # cls: pydantic @classmethod validators
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B311"]  # random is used for seeded sampling, never for secrets

@@ -1,0 +1,17 @@
+# Agent AI development scratch docs (plans, smoke-test guides); not committed
+PLAN*.md
+.review-pr-ignored-*
+.impeccable/
+.fallow/
+agent-review-summary.md
+
+.env
+local/
+*.wav
+*.mp3
+*.m4a
+.venv/
+__pycache__/
+.pytest_cache/
+logs/
+
