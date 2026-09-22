@@ -69,12 +69,15 @@ def download_cmd(
         typer.echo(f"  FAILED {r['episode_label']} ({r['reason']}): {r['error']}")
 
 
-def _transcribe_progress(r: dict) -> None:
-    """One line per episode as it finishes; the run can take hours."""
+def _worker_progress(r: dict) -> None:
+    """One line per (episode, candidate) as it finishes; a run can take hours.
+    Shared by ``transcribe`` and ``enroll``; only transcribe reports an rtf."""
     who = f"{r['episode_label']} ({r['candidate']})"
     if r["status"] == "success":
-        rtf = f"{r['rtf']:.3f}" if r["rtf"] is not None else "n/a"
-        typer.echo(f"{who}: {r['wall_s']:.1f}s wall, rtf={rtf}")
+        line = f"{who}: {r['wall_s']:.1f}s wall"
+        if "rtf" in r:
+            line += f", rtf={r['rtf']:.3f}" if r["rtf"] is not None else ", rtf=n/a"
+        typer.echo(line)
     elif r["status"] == "failed":
         typer.echo(f"{who}: FAILED ({r['reason']})")
     else:
@@ -96,7 +99,7 @@ def transcribe_cmd(
         all_=all_episodes,
         episodes_arg=episodes,
         force=force,
-        on_result=_transcribe_progress,
+        on_result=_worker_progress,
     )
     rtf_str = f"{summary['overall_rtf']:.3f}" if summary["overall_rtf"] is not None else "n/a"
     projected_str = (
@@ -111,17 +114,6 @@ def transcribe_cmd(
     )
     for r in summary["failures"]:
         typer.echo(f"  FAILED {r['episode_label']} ({r['candidate']}): {r['reason']}")
-
-
-def _enroll_progress(r: dict) -> None:
-    """One line per transcript as it finishes."""
-    who = f"{r['episode_label']} ({r['candidate']})"
-    if r["status"] == "success":
-        typer.echo(f"{who}: {r['wall_s']:.1f}s wall")
-    elif r["status"] == "failed":
-        typer.echo(f"{who}: FAILED ({r['reason']})")
-    else:
-        typer.echo(f"{who}: skipped ({r['reason']})")
 
 
 @app.command("enroll")
@@ -139,7 +131,7 @@ def enroll_cmd(
         floor=floor,
         margin=margin,
         force=force,
-        on_result=_enroll_progress,
+        on_result=_worker_progress,
     )
     typer.echo(
         f"enroll: {summary['success']} succeeded, {summary['skipped']} skipped, "
@@ -181,7 +173,13 @@ def extract_ingest_cmd(
         f"({summary['verdicts_rows']} rows)"
     )
     for r in summary["failures"]:
-        typer.echo(f"  FAILED {r['episode_id']} ({r['candidate']}/{r['model']}): {r['error']}")
+        # bad_packet_meta failures have no episode_id/candidate/model; the
+        # run is scoped to one (candidate, model), so fall back to those.
+        who = r.get("episode_id") or r.get("packet_dir", "unknown")
+        typer.echo(
+            f"  FAILED {who} ({r.get('candidate', candidate)}/{r.get('model', model)}): "
+            f"{r.get('error', r.get('reason'))}"
+        )
 
 
 for _name in (

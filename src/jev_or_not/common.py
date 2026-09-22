@@ -59,6 +59,22 @@ def episode_sort_key(episode: int | None, label: str) -> tuple:
     return (episode is None, episode or 0, label)
 
 
+def parse_episode_numbers(episodes_arg: str) -> list[int]:
+    """``--episodes 1,2,1`` as ``[1, 2]``: de-duped, in the order given."""
+    return list(dict.fromkeys(int(x) for x in episodes_arg.split(",") if x.strip()))
+
+
+def tally(results: list[dict]) -> dict:
+    """Per-status counts for a phase run's result dicts, plus the failures."""
+    failures = [r for r in results if r["status"] == "failed"]
+    return {
+        "success": sum(r["status"] == "success" for r in results),
+        "failed": len(failures),
+        "skipped": sum(r["status"] == "skipped" for r in results),
+        "failures": failures,
+    }
+
+
 def read_jsonl(path: Path) -> Iterator[dict]:
     """Yield each non-blank line of a JSONL file as a dict."""
     for line in path.read_text().splitlines():

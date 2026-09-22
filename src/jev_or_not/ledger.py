@@ -6,6 +6,7 @@ phases. The ledger is a rebuildable cache, not a published artifact.
 
 import sqlite3
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 DEFAULT_PATH = "local/ledger.sqlite"
@@ -76,6 +77,11 @@ def claim(conn: sqlite3.Connection, task_id: str, stale_after_s: int = STALE_CLA
     return cur.rowcount > 0
 
 
+def task_status(conn: sqlite3.Connection, task_id: str) -> str:
+    """The task's current status, e.g. why ``claim`` just declined it."""
+    return conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[0]
+
+
 def complete(conn: sqlite3.Connection, task_id: str, result_path: str) -> None:
     conn.execute(
         "UPDATE tasks SET status = 'success', result_path = ?, updated_at = datetime('now') "
@@ -97,5 +103,36 @@ def fail(conn: sqlite3.Connection, task_id: str, error_detail: str) -> None:
 def successes(conn: sqlite3.Connection, phase: str) -> list[sqlite3.Row]:
     conn.row_factory = sqlite3.Row
     return conn.execute(
-        "SELECT * FROM tasks WHERE phase = ? AND status = 'success'", (phase,)
+        "SELECT rowid, * FROM tasks WHERE phase = ? AND status = 'success' "
+        "ORDER BY updated_at, rowid",
+        (phase,),
     ).fetchall()
+
+
+def _result_exists(task: sqlite3.Row) -> bool:
+    return Path(task["result_path"]).exists()
+
+
+def latest_successes(
+    conn: sqlite3.Connection,
+    phase: str,
+    exists: Callable[[sqlite3.Row], bool] = _result_exists,
+) -> list[sqlite3.Row]:
+    """The newest success per item_id whose result still ``exists``.
+
+    A re-run (--force, or a changed fingerprint) leaves an older success row
+    for the same item_id behind; exporting both would duplicate that item.
+    The ledger is a rebuildable cache, so a missing result just drops the row.
+    ``updated_at`` has 1-second resolution, so ties go to the later rowid.
+    """
+    latest: dict[str, sqlite3.Row] = {}
+    for task in successes(conn, phase):
+        if not exists(task):
+            continue
+        prev = latest.get(task["item_id"])
+        if prev is None or (task["updated_at"], task["rowid"]) > (
+            prev["updated_at"],
+            prev["rowid"],
+        ):
+            latest[task["item_id"]] = task
+    return list(latest.values())

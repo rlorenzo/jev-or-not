@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from jev_or_not import enroll as enroll_module
+from jev_or_not import transcribe as transcribe_module
 from jev_or_not.ledger import open_ledger
 
 
@@ -106,3 +107,23 @@ def test_apply_one_failure_writes_no_index_row(conn, tmp_path, monkeypatch):
 
     index_rows = enroll_module.export_index(conn, [row])
     assert index_rows == []
+
+
+def test_apply_sources_all_exist():
+    # Hand-maintained like transcribe.WORKER_SOURCES; a rename in the worker
+    # must not turn the enroll code hash into a crash at the top of a run.
+    for name in enroll_module.APPLY_SOURCES:
+        assert (transcribe_module.WORKER_DIR / name).exists(), name
+
+
+@pytest.mark.parametrize(
+    "thresholds,expected",
+    [
+        (None, "provisional"),  # the pre-threshold enrollment.json shape
+        ({"floor": 0.6, "margin": 0.15, "status": "frozen"}, "frozen"),
+    ],
+)
+def test_thresholds_status(tmp_path, thresholds, expected):
+    path = tmp_path / "enrollment.json"
+    path.write_text(json.dumps({"thresholds": thresholds}))
+    assert enroll_module._thresholds_status(path) == expected

@@ -77,7 +77,7 @@ def write_host_embeddings(
         "enrollment_hash": ehash,
         "embedding_model": embedding_model,
         "dimension": dims.pop(),
-        "hosts": {host: [float(x) for x in emb] for host, emb in host_embeddings.items()},
+        "hosts": {host: emb.tolist() for host, emb in host_embeddings.items()},
         "created_at": datetime.now(UTC).isoformat(),
     }
     write_atomic(path, data)
@@ -95,11 +95,12 @@ def load_host_embeddings(path: str) -> tuple[dict[str, np.ndarray], str]:
 def _get_host_embeddings(
     pipeline, john_wav: str, jason_wav: str, enrollment_path: str, host_embeddings_path: str | None
 ) -> tuple[dict[str, np.ndarray], str]:
-    """Prefers embedding live from the wav clips when they're present (the
-    source of truth); falls back to a cached ``--host-embeddings`` file when
-    they're not (e.g. on a machine without the gitignored local/ audio). When
-    both are available, embeds live and refreshes the cache -- a live clip
-    always wins over a cached vector."""
+    """Host vectors from the cached ``--host-embeddings`` file when its
+    enrollment_hash matches the wav clips (or the clips are absent, e.g. on a
+    machine without the gitignored local/ audio); otherwise embeds live from
+    the clips (the source of truth) and refreshes the cache. Re-embedding only
+    on a hash change keeps each per-transcript call from redoing two forward
+    passes and rewriting the tracked cache file."""
     wavs_present = os.path.exists(john_wav) and os.path.exists(jason_wav)
     if not wavs_present:
         if not host_embeddings_path or not os.path.exists(host_embeddings_path):
@@ -111,13 +112,14 @@ def _get_host_embeddings(
 
     ehash = enrollment_hash(john_wav, jason_wav, enrollment_path)
     if host_embeddings_path and os.path.exists(host_embeddings_path):
-        _, stored_ehash = load_host_embeddings(host_embeddings_path)
-        if stored_ehash != ehash:
-            print(
-                f"warning: {host_embeddings_path} is stale (enrollment_hash "
-                f"{stored_ehash[:12]}... != live {ehash[:12]}...); re-embedding from wavs",
-                file=sys.stderr,
-            )
+        cached, stored_ehash = load_host_embeddings(host_embeddings_path)
+        if stored_ehash == ehash:
+            return cached, ehash
+        print(
+            f"warning: {host_embeddings_path} is stale (enrollment_hash "
+            f"{stored_ehash[:12]}... != live {ehash[:12]}...); re-embedding from wavs",
+            file=sys.stderr,
+        )
     host_embeddings = {
         "john": embed_clip(pipeline, john_wav),
         "jason": embed_clip(pipeline, jason_wav),
@@ -142,11 +144,13 @@ def _cluster_turns(segments: list[dict]) -> dict[str, list[tuple[float, float]]]
 
 def apply_labels(transcript: dict, cluster_results: dict[str, dict]) -> dict:
     """Pure: stamps a `speaker` field on every segment and word from its
-    cluster's assigned label; a null cluster becomes UNKNOWN. Returns a new
+    cluster's assigned label; a null cluster, or one with no result (e.g. a
+    word-level cluster no segment carries), becomes UNKNOWN. Returns a new
     dict -- does not mutate `transcript`."""
 
     def label_for(cluster: str | None) -> str:
-        return cluster_results[cluster]["label"] if cluster is not None else "UNKNOWN"
+        result = cluster_results.get(cluster) if cluster is not None else None
+        return result["label"] if result else "UNKNOWN"
 
     out = dict(transcript)
     out["segments"] = [
@@ -207,15 +211,7 @@ def run(
         "enrollment_hash": ehash,
         "floor": floor,
         "margin": margin,
-        "clusters": {
-            c: {
-                "label": r["label"],
-                "similarity": r["similarity"],
-                "margin": r["margin"],
-                "per_host": r["per_host"],
-            }
-            for c, r in cluster_results.items()
-        },
+        "clusters": cluster_results,
     }
     return output
 

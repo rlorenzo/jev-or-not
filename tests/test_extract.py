@@ -8,7 +8,7 @@ import pytest
 
 from jev_or_not import extract as extract_module
 from jev_or_not.ledger import open_ledger
-from jev_or_not.models import Episode
+from jev_or_not.models import Episode, EvidenceQuote
 
 
 def _episode(**overrides) -> Episode:
@@ -226,3 +226,96 @@ def test_ingest_rerun_of_success_is_skip(conn, tmp_path):
 
     assert first["status"] == "success"
     assert second["status"] == "skipped"
+
+
+def test_ingest_of_rewritten_output_replaces_earlier_rulings(conn, tmp_path):
+    packet_dir = _packet(tmp_path, [_valid_ruling()])
+    episodes_by_id = {"theincomparable/robot/6": _episode()}
+    log_path = tmp_path / "llm_log.jsonl"
+
+    first = extract_module.ingest_one(conn, packet_dir, episodes_by_id, llm_log_path=log_path)
+    # A re-run subagent rewrites output.json after the first ingest succeeded.
+    (packet_dir / "output.json").write_text(
+        json.dumps([_valid_ruling(subject="a Dalek"), _valid_ruling(subject="a Roomba")])
+    )
+    conn.execute("UPDATE tasks SET updated_at = '2000-01-01 00:00:00'")  # first is older
+    second = extract_module.ingest_one(conn, packet_dir, episodes_by_id, llm_log_path=log_path)
+
+    assert first["status"] == "success"
+    assert second["status"] == "success"
+    verdicts = extract_module.export_verdicts(conn, tmp_path / "verdicts.jsonl")
+    assert [v.subject for v in verdicts] == ["a Dalek", "a Roomba"]  # no duplicate #0
+
+
+def test_index_rows_falls_back_per_candidate(tmp_path):
+    enrolled = tmp_path / "enrolled_index.jsonl"
+    enrolled.write_text(
+        json.dumps(
+            {
+                "episode_id": "e1",
+                "episode_label": "1",
+                "candidate": "A",
+                "enrolled_path": "a.json",
+                "enrolled_hash": "ha",
+            }
+        )
+        + "\n"
+    )
+    transcripts = tmp_path / "transcript_index.jsonl"
+    transcripts.write_text(
+        json.dumps(
+            {
+                "episode_id": "e1",
+                "episode_label": "1",
+                "candidate": "B",
+                "transcript_path": "b.json",
+                "transcript_hash": "hb",
+            }
+        )
+        + "\n"
+    )
+
+    assert [r["path"] for r in extract_module._index_rows("A", enrolled, transcripts)] == ["a.json"]
+    assert [r["path"] for r in extract_module._index_rows("B", enrolled, transcripts)] == ["b.json"]
+
+
+@pytest.mark.parametrize(
+    "start_s,end_s,duration_s,ok",
+    [
+        (299.0, 300.9, 300, True),  # measured audio outruns the whole-second feed duration
+        (299.0, 303.0, 300, False),
+        (-1.0, 1.0, None, False),  # negative start rejected even without a duration
+        (1.0, 5000.0, None, True),
+    ],
+)
+def test_validate_timestamps(start_s, end_s, duration_s, ok):
+    quotes = [EvidenceQuote(quote="Short quote.", start_s=start_s, end_s=end_s)]
+    if ok:
+        extract_module._validate_timestamps(quotes, duration_s)
+    else:
+        with pytest.raises(ValueError):
+            extract_module._validate_timestamps(quotes, duration_s)
+
+
+def test_ingest_bad_packet_meta_is_failure_not_crash(conn, tmp_path):
+    packet_dir = _packet(tmp_path, [_valid_ruling()])
+    (packet_dir / "packet.json").write_text("{not json")
+
+    result = extract_module.ingest_one(conn, packet_dir, {}, llm_log_path=tmp_path / "log.jsonl")
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "bad_packet_meta"
+
+
+def test_ingest_packet_meta_missing_keys_is_failure_not_crash(conn, tmp_path):
+    packet_dir = _packet(tmp_path, [_valid_ruling()])
+    (packet_dir / "packet.json").write_text("{}")
+
+    result = extract_module.ingest_one(conn, packet_dir, {}, llm_log_path=tmp_path / "log.jsonl")
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "bad_packet_meta"
+
+
+def test_index_rows_missing_indexes_is_empty(tmp_path):
+    assert extract_module._index_rows("A", tmp_path / "enrolled.jsonl", tmp_path / "t.jsonl") == []

@@ -29,7 +29,15 @@ import httpx
 from jev_or_not.catalog import eligible_episodes, read_episodes
 from jev_or_not.common import USER_AGENT, episode_sort_key, write_lines_atomic
 from jev_or_not.fingerprint import file_hash, fingerprint
-from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
+from jev_or_not.ledger import (
+    claim,
+    complete,
+    ensure_task,
+    fail,
+    latest_successes,
+    open_ledger,
+    task_status,
+)
 from jev_or_not.models import AudioManifestEntry, Episode
 from jev_or_not.pilot import pilot_episode_ids
 
@@ -198,12 +206,9 @@ def download_one(
 
     task_id = ensure_task(conn, "download", episode.episode_id, fp)
     if not claim(conn, task_id):
-        status = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[
-            0
-        ]
         return {
             "status": "skipped",
-            "reason": status,
+            "reason": task_status(conn, task_id),
             "episode_id": episode.episode_id,
             "episode_label": episode.episode_label,
         }
@@ -296,20 +301,17 @@ def download_one(
 def export_manifest(conn: sqlite3.Connection, episodes: list[Episode]) -> list[AudioManifestEntry]:
     """Export the newest successful download per episode, sorted by episode number."""
     ep_by_id = {e.episode_id: e for e in episodes}
-    latest: dict[str, tuple[str, dict]] = {}
-    for task in successes(conn, "download"):
-        meta_path = _meta_path(Path(task["result_path"]))
-        if not meta_path.exists():
-            continue  # ledger is a rebuildable cache; a missing sidecar just drops that row
-        prev = latest.get(task["item_id"])
-        if prev is None or task["updated_at"] > prev[0]:
-            latest[task["item_id"]] = (task["updated_at"], json.loads(meta_path.read_text()))
+    tasks = latest_successes(
+        conn, "download", exists=lambda task: _meta_path(Path(task["result_path"])).exists()
+    )
 
     def sort_key(meta: dict) -> tuple:
         ep = ep_by_id.get(meta["episode_id"])
         return episode_sort_key(ep.episode if ep else None, meta["episode_label"])
 
-    metas = sorted((m for _, m in latest.values()), key=sort_key)
+    metas = sorted(
+        (json.loads(_meta_path(Path(t["result_path"])).read_text()) for t in tasks), key=sort_key
+    )
     rows = [AudioManifestEntry(**m) for m in metas]
     write_lines_atomic(MANIFEST_PATH, (r.model_dump_json() for r in rows))
     return rows

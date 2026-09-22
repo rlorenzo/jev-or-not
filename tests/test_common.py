@@ -6,7 +6,9 @@ from jev_or_not.common import (
     episode_sort_key,
     page_title,
     parse_duration,
+    parse_episode_numbers,
     read_jsonl,
+    tally,
     write_json_atomic,
     write_lines_atomic,
 )
@@ -76,3 +78,22 @@ def test_write_json_atomic(tmp_path):
     write_json_atomic(path, {"b": 1, "a": 2})
     assert json.loads(path.read_text()) == {"b": 1, "a": 2}
     assert path.read_text().endswith("\n")
+
+
+def test_parse_episode_numbers_dedupes_in_order():
+    assert parse_episode_numbers("3, 1,3,,2") == [3, 1, 2]
+
+
+def test_tally_counts_statuses_and_keeps_failures():
+    results = [
+        {"status": "success"},
+        {"status": "failed", "reason": "timeout"},
+        {"status": "skipped"},
+        {"status": "success"},
+    ]
+    assert tally(results) == {
+        "success": 2,
+        "failed": 1,
+        "skipped": 1,
+        "failures": [{"status": "failed", "reason": "timeout"}],
+    }

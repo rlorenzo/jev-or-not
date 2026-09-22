@@ -20,12 +20,22 @@ from pathlib import Path
 from jev_or_not.catalog import eligible_episodes, read_episodes, total_duration_s
 from jev_or_not.common import (
     episode_sort_key,
+    parse_episode_numbers,
     read_jsonl,
+    tally,
     write_json_atomic,
     write_lines_atomic,
 )
 from jev_or_not.fingerprint import fingerprint
-from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
+from jev_or_not.ledger import (
+    claim,
+    complete,
+    ensure_task,
+    fail,
+    latest_successes,
+    open_ledger,
+    task_status,
+)
 from jev_or_not.models import AudioManifestEntry, Episode, TranscriptIndexEntry
 from jev_or_not.pilot import pilot_episode_ids
 
@@ -66,9 +76,9 @@ CANDIDATES: dict[str, dict] = {
 DIARIZATION = {"pipeline": "pyannote/speaker-diarization-community-1"}
 
 
-def worker_code_hash() -> str:
-    """sha256 over the worker modules the transcription run executes, plus its
-    lockfile.
+def worker_code_hash(sources: tuple[str, ...] = WORKER_SOURCES) -> str:
+    """sha256 over the worker modules a run executes (``sources``, defaulting
+    to the transcription run's), plus the worker lockfile.
 
     Any change to that code or to its pinned dependencies can change the
     worker's output, so it must invalidate cached transcripts. Deliberately a
@@ -78,7 +88,7 @@ def worker_code_hash() -> str:
     transcript over an unrelated edit.
     """
     h = hashlib.sha256()
-    for name in WORKER_SOURCES:
+    for name in sources:
         h.update((WORKER_DIR / name).read_bytes())
     h.update(WORKER_LOCK.read_bytes())
     return h.hexdigest()
@@ -183,10 +193,7 @@ def transcribe_one(
     item_id = f"{episode.episode_id}|{candidate}"
     task_id = ensure_task(conn, "transcribe", item_id, fp)
     if not claim(conn, task_id):
-        status = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[
-            0
-        ]
-        return {**ident, "status": "skipped", "reason": status}
+        return {**ident, "status": "skipped", "reason": task_status(conn, task_id)}
 
     requests_dir.mkdir(parents=True, exist_ok=True)
     transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -255,19 +262,8 @@ def export_index(
     """The newest successful transcript per (episode, candidate), sorted by
     episode then candidate."""
     ep_by_id = {e.episode_id: e for e in episodes}
-    # A re-run (--force, or an invalidated worker_code_hash) leaves an older
-    # success row for the same item_id behind; keeping both would put the same
-    # episode/candidate in the index twice. Same rule as download.export_manifest.
-    latest: dict[str, tuple[str, dict]] = {}
-    for task in successes(conn, "transcribe"):
-        if not Path(task["result_path"]).exists():
-            continue  # ledger is a rebuildable cache; a missing file just drops that row
-        prev = latest.get(task["item_id"])
-        if prev is None or task["updated_at"] > prev[0]:
-            latest[task["item_id"]] = (task["updated_at"], task)
-
     rows = []
-    for _, task in latest.values():
+    for task in latest_successes(conn, "transcribe"):
         path = Path(task["result_path"])
         # One read serves both the parsed fields and the hash; transcripts run
         # to hundreds of KB each and this loop covers the whole catalog.
@@ -326,8 +322,7 @@ def _select_episodes(
 
     if episodes_arg:
         ep_by_number = {e.episode: e for e in episodes if e.episode is not None}
-        # dict.fromkeys: de-dupe `--episodes 1,2,1` without reordering.
-        numbers = list(dict.fromkeys(int(x) for x in episodes_arg.split(",") if x.strip()))
+        numbers = parse_episode_numbers(episodes_arg)
         selected = []
         for n in numbers:
             episode = ep_by_number.get(n)
@@ -399,8 +394,6 @@ def run(
         conn.close()
 
     succeeded = [r for r in results if r["status"] == "success"]
-    failed = [r for r in results if r["status"] == "failed"]
-    skipped = [r for r in results if r["status"] == "skipped"]
 
     total_wall_s = sum(r["wall_s"] for r in succeeded)
     total_audio_s = sum(r["duration_s"] for r in succeeded)
@@ -410,10 +403,7 @@ def run(
 
     return {
         "episodes": len(selected),
-        "success": len(succeeded),
-        "failed": len(failed),
-        "skipped": len(skipped),
-        "failures": failed,
+        **tally(results),
         "results": results,
         "index_path": str(INDEX_PATH),
         "index_rows": len(index_rows),

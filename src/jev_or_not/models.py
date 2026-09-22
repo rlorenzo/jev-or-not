@@ -2,6 +2,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
+# An extracted or hand-annotated ruling's verdict; shared by PilotReference,
+# Ruling, and extract.ExtractedRuling so they cannot drift.
+Verdict = Literal["yes", "no", "ambiguous", "no_ruling"]
+VerdictStrength = Literal["firm", "hedged", "reversed_during_episode"]
+
 
 class Record(BaseModel):
     """Base class for all dataset artifact records."""
@@ -65,8 +70,8 @@ class PilotReference(Record):
     ruling_id: str
     subject: str
     category: str
-    verdict: Literal["yes", "no", "ambiguous", "no_ruling"]
-    verdict_strength: Literal["firm", "hedged", "reversed_during_episode"] | None
+    verdict: Verdict
+    verdict_strength: VerdictStrength | None
     ruling_start_s: float
     ruling_end_s: float
     speaker: Literal["JOHN", "JASON", "GUEST"]
@@ -225,8 +230,8 @@ class Ruling(Record):
     subject: str
     category: str
     question_as_posed: str
-    verdict: Literal["yes", "no", "ambiguous", "no_ruling"]
-    verdict_strength: Literal["firm", "hedged", "reversed_during_episode"] | None
+    verdict: Verdict
+    verdict_strength: VerdictStrength | None
     evidence_quotes: list[EvidenceQuote]
     reasoning_summary: str
     extractor_model: str

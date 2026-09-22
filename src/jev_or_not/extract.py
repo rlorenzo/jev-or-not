@@ -10,24 +10,39 @@ call. So this module only does two things:
 - ``ingest``: validate the JSON a subagent wrote back and append accepted
   rulings to ``data/verdicts.jsonl`` via the shared ledger.
 
-No network, no ``anthropic`` dependency. Enrolled transcripts don't exist
-yet, so ``_index_rows`` falls back to ``data/transcript_index.jsonl`` and
-treats a missing ``speaker`` field as ``"UNKNOWN"``.
+No network, no ``anthropic`` dependency. Until ``jev-or-not enroll`` has
+written ``data/enrolled_index.jsonl``, ``_index_rows`` falls back to
+``data/transcript_index.jsonl`` and treats a missing ``speaker`` field as
+``"UNKNOWN"``.
 """
 
 import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 
 from jev_or_not.catalog import EPISODES_PATH, read_episodes
-from jev_or_not.common import read_jsonl, write_json_atomic, write_lines_atomic
+from jev_or_not.common import (
+    episode_sort_key,
+    parse_episode_numbers,
+    read_jsonl,
+    tally,
+    write_json_atomic,
+    write_lines_atomic,
+)
 from jev_or_not.fingerprint import fingerprint
-from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
-from jev_or_not.models import EvidenceQuote, Ruling
+from jev_or_not.ledger import (
+    claim,
+    complete,
+    ensure_task,
+    fail,
+    latest_successes,
+    open_ledger,
+    task_status,
+)
+from jev_or_not.models import EvidenceQuote, Ruling, Verdict, VerdictStrength
 
 PHASE = "extract"
 PROMPT_PATH = Path("prompts/extract.md")
@@ -40,6 +55,9 @@ LLM_LOG_PATH = Path("local/llm_log.jsonl")
 # The subagent alias recorded as `extractor_model`; a model id, not an API model name.
 MODEL_ALIASES = {"sonnet": "claude-sonnet-subagent", "haiku": "claude-haiku-subagent"}
 MAX_QUOTES = 3
+# Feed durations are whole seconds (often floored) while transcript
+# timestamps are measured floats, so a closing quote can overrun by <1s.
+DURATION_TOLERANCE_S = 2.0
 
 
 class ExtractedRuling(BaseModel):
@@ -50,31 +68,17 @@ class ExtractedRuling(BaseModel):
     subject: str
     category: str
     question_as_posed: str
-    verdict: Literal["yes", "no", "ambiguous", "no_ruling"]
-    verdict_strength: Literal["firm", "hedged", "reversed_during_episode"] | None = None
-    evidence_quotes: list[EvidenceQuote] = []
+    verdict: Verdict
+    verdict_strength: VerdictStrength | None = None
+    evidence_quotes: list[EvidenceQuote] = Field(default=[], max_length=MAX_QUOTES)
     reasoning_summary: str
-    extractor_confidence: float
+    extractor_confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator("subject", "category", "reasoning_summary", "question_as_posed")
     @classmethod
     def _non_empty(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("must not be empty")
-        return v
-
-    @field_validator("evidence_quotes")
-    @classmethod
-    def _max_quotes(cls, v: list[EvidenceQuote]) -> list[EvidenceQuote]:
-        if len(v) > MAX_QUOTES:
-            raise ValueError(f"at most {MAX_QUOTES} evidence quotes, got {len(v)}")
-        return v
-
-    @field_validator("extractor_confidence")
-    @classmethod
-    def _confidence_range(cls, v: float) -> float:
-        if not 0.0 <= v <= 1.0:
-            raise ValueError("extractor_confidence must be within [0, 1]")
         return v
 
 
@@ -157,39 +161,37 @@ def _prompt_version_and_text(path: Path = PROMPT_PATH) -> tuple[str, str]:
 
 
 def _index_rows(
+    candidate: str,
     enrolled_index_path: Path = ENROLLED_INDEX_PATH,
     transcript_index_path: Path = TRANSCRIPT_INDEX_PATH,
 ) -> list[dict]:
-    """Enrolled transcripts if the index has rows, else raw transcripts.
+    """``candidate``'s enrolled transcripts if the index has any, else its
+    raw transcripts.
 
-    Enrollment (PLAN.md Phase 2 speaker resolution) lands as a separate,
-    concurrent piece of work; until it has written rows, this falls back to
-    the plain transcript index, whose segments carry no ``speaker`` field. A
-    present-but-empty enrolled index (e.g. touched but not yet populated by a
-    concurrent run) is treated the same as absent, not as "zero transcripts".
+    Until ``jev_or_not.enroll`` (PLAN.md Phase 2 speaker resolution) has
+    written rows, this falls back to the plain transcript index, whose
+    segments carry no ``speaker`` field. A present-but-empty enrolled index
+    (e.g. touched but not yet populated by a concurrent run) is treated the
+    same as absent, not as "zero transcripts". The fallback is per
+    candidate: enrolled rows for one candidate don't hide another's
+    unenrolled transcripts.
     """
-    if enrolled_index_path.exists():
-        rows = [
-            {
-                "episode_id": r["episode_id"],
-                "episode_label": r["episode_label"],
-                "candidate": r["candidate"],
-                "path": r["enrolled_path"],
-                "hash": r["enrolled_hash"],
-            }
-            for r in read_jsonl(enrolled_index_path)
-        ]
-        if rows:
-            return rows
+    kind = "enrolled"
+    enrolled = read_jsonl(enrolled_index_path) if enrolled_index_path.exists() else []
+    source = [r for r in enrolled if r["candidate"] == candidate]
+    if not source:
+        kind = "transcript"
+        transcripts = read_jsonl(transcript_index_path) if transcript_index_path.exists() else []
+        source = [r for r in transcripts if r["candidate"] == candidate]
     return [
         {
             "episode_id": r["episode_id"],
             "episode_label": r["episode_label"],
             "candidate": r["candidate"],
-            "path": r["transcript_path"],
-            "hash": r["transcript_hash"],
+            "path": r[f"{kind}_path"],
+            "hash": r[f"{kind}_hash"],
         }
-        for r in read_jsonl(transcript_index_path)
+        for r in source
     ]
 
 
@@ -214,13 +216,9 @@ def prepare(
 
     prompt_version, prompt_text = _prompt_version_and_text(prompt_path)
     episodes_by_id = {e.episode_id: e for e in read_episodes(episodes_path)}
-    rows = [
-        r
-        for r in _index_rows(enrolled_index_path, transcript_index_path)
-        if r["candidate"] == candidate
-    ]
+    rows = _index_rows(candidate, enrolled_index_path, transcript_index_path)
     if episodes_arg:
-        numbers = {int(x) for x in episodes_arg.split(",") if x.strip()}
+        numbers = set(parse_episode_numbers(episodes_arg))
         wanted_ids = {e.episode_id for e in episodes_by_id.values() if e.episode in numbers}
         rows = [r for r in rows if r["episode_id"] in wanted_ids]
 
@@ -254,13 +252,13 @@ def prepare(
 
 
 def _validate_timestamps(quotes: list[EvidenceQuote], duration_s: float | None) -> None:
-    if duration_s is None:
-        return  # no known episode duration to bound against
     for q in quotes:
-        if q.start_s < 0 or q.end_s > duration_s:
+        if q.start_s < 0:
+            raise ValueError(f"quote start timestamp {q.start_s} must be non-negative")
+        if duration_s is not None and q.end_s > duration_s + DURATION_TOLERANCE_S:
             raise ValueError(
                 f"quote timestamp [{q.start_s}, {q.end_s}] outside episode duration "
-                f"[0, {duration_s}]"
+                f"[0, {duration_s}] (+{DURATION_TOLERANCE_S}s tolerance)"
             )
 
 
@@ -269,13 +267,28 @@ def ingest_one(
 ) -> dict:
     """Validate one packet's output.json and, if valid, record it as a
     ledger success whose result file holds the filled-in Ruling rows."""
-    packet_meta = json.loads((packet_dir / "packet.json").read_text())
-    episode_id = packet_meta["episode_id"]
-    candidate = packet_meta["candidate"]
-    model = packet_meta["model"]
-    transcript_hash = packet_meta["transcript_hash"]
-    prompt_version = packet_meta["prompt_version"]
-    packet_hash = packet_meta["packet_hash"]
+    try:
+        packet_meta = json.loads((packet_dir / "packet.json").read_text())
+        episode_id = packet_meta["episode_id"]
+        candidate = packet_meta["candidate"]
+        model = packet_meta["model"]
+        transcript_hash = packet_meta["transcript_hash"]
+        prompt_version = packet_meta["prompt_version"]
+        packet_hash = packet_meta["packet_hash"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        # No trustworthy item_id to record in the ledger; report and move on.
+        return {
+            "episode_id": None,
+            "status": "failed",
+            "reason": "bad_packet_meta",
+            "error": str(exc),
+            "packet_dir": str(packet_dir),
+        }
+
+    # The output is part of the fingerprint: a re-run subagent that rewrites
+    # output.json after a successful ingest must be re-ingested, not skipped.
+    raw = (packet_dir / "output.json").read_bytes()
+    output_hash = hashlib.sha256(raw).hexdigest()
 
     ident = {"episode_id": episode_id, "candidate": candidate, "model": model}
     item_id = f"{episode_id}|{candidate}|{model}"
@@ -284,22 +297,21 @@ def ingest_one(
         prompt_version=prompt_version,
         model=model,
         packet_hash=packet_hash,
+        output_hash=output_hash,
     )
     task_id = ensure_task(conn, PHASE, item_id, fp)
     if not claim(conn, task_id):
-        status = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[
-            0
-        ]
-        return {**ident, "status": "skipped", "reason": status}
+        return {**ident, "status": "skipped", "reason": task_status(conn, task_id)}
 
-    output_path = packet_dir / "output.json"
-    raw = output_path.read_bytes()
+    def failed(reason: str, exc: Exception) -> dict:
+        detail = str(exc)
+        fail(conn, task_id, detail)
+        return {**ident, "status": "failed", "reason": reason, "error": detail}
+
     try:
         extracted = _OUTPUT_ADAPTER.validate_json(raw)
     except ValidationError as exc:
-        detail = str(exc)
-        fail(conn, task_id, detail)
-        return {**ident, "status": "failed", "reason": "invalid_output", "error": detail}
+        return failed("invalid_output", exc)
 
     episode = episodes_by_id.get(episode_id)
     duration_s = episode.duration_s if episode else None
@@ -307,9 +319,7 @@ def ingest_one(
         for r in extracted:
             _validate_timestamps(r.evidence_quotes, duration_s)
     except ValueError as exc:
-        detail = str(exc)
-        fail(conn, task_id, detail)
-        return {**ident, "status": "failed", "reason": "bad_timestamp", "error": detail}
+        return failed("bad_timestamp", exc)
 
     rulings = [
         Ruling(
@@ -339,7 +349,6 @@ def ingest_one(
     write_json_atomic(result_path, {"rulings": [r.model_dump() for r in rulings]})
     complete(conn, task_id, str(result_path))
 
-    output_hash = hashlib.sha256(raw).hexdigest()
     llm_log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(llm_log_path, "a") as f:
         f.write(
@@ -361,38 +370,23 @@ def ingest_one(
 
 
 def export_verdicts(conn, path: Path = VERDICTS_PATH) -> list[Ruling]:
-    """Every ledger-success ruling, sorted by episode, ruling_id, candidate,
-    model, written atomically to ``data/verdicts.jsonl``."""
+    """The newest ledger-success rulings per (episode, candidate, model),
+    sorted by episode, ruling_id, candidate, model, written atomically to
+    ``data/verdicts.jsonl``."""
     rows: list[tuple[Ruling, str, str]] = []  # (ruling, candidate, model)
-    for task in successes(conn, PHASE):
-        result_path = Path(task["result_path"])
-        if not result_path.exists():
-            continue  # ledger is a rebuildable cache; a missing file just drops that row
-        _, candidate, model = task["item_id"].split("|")
-        data = json.loads(result_path.read_text())
+    for task in latest_successes(conn, PHASE):
+        _, candidate, model = task["item_id"].rsplit("|", 2)
+        data = json.loads(Path(task["result_path"]).read_text())
         rows.extend((Ruling(**d), candidate, model) for d in data["rulings"])
 
-    rows.sort(
-        key=lambda t: (
-            t[0].episode is None,
-            t[0].episode or 0,
-            t[0].ruling_id,
-            t[1],
-            t[2],
-        )
-    )
+    rows.sort(key=lambda t: (*episode_sort_key(t[0].episode, t[0].ruling_id), t[1], t[2]))
     write_lines_atomic(path, (r.model_dump_json() for r, _, _ in rows))
     return [r for r, _, _ in rows]
 
 
-def prepare_selected_packet_dirs(
-    candidate: str, model: str, packets_dir: Path = PACKETS_DIR
-) -> list[Path]:
-    """Every packet dir already prepared for (candidate, model)."""
-    if not packets_dir.exists():
-        return []
-    suffix = f"-{candidate}-{model}"
-    return sorted(p for p in packets_dir.iterdir() if p.is_dir() and p.name.endswith(suffix))
+def _prepared_packet_dirs(candidate: str, model: str, packets_dir: Path) -> list[Path]:
+    """Every packet dir already prepared for (candidate, model); see ``_packet_dir``."""
+    return sorted(p for p in packets_dir.glob(f"*-{candidate}-{model}") if p.is_dir())
 
 
 def ingest(
@@ -412,7 +406,7 @@ def ingest(
     conn = open_ledger()
     try:
         results = []
-        for packet_dir in prepare_selected_packet_dirs(candidate, model, packets_dir):
+        for packet_dir in _prepared_packet_dirs(candidate, model, packets_dir):
             if not (packet_dir / "output.json").exists():
                 results.append(
                     {
@@ -428,15 +422,9 @@ def ingest(
     finally:
         conn.close()
 
-    succeeded = [r for r in results if r["status"] == "success"]
-    failed = [r for r in results if r["status"] == "failed"]
-    skipped = [r for r in results if r["status"] == "skipped"]
     return {
         "results": results,
-        "success": len(succeeded),
-        "failed": len(failed),
-        "skipped": len(skipped),
-        "failures": failed,
+        **tally(results),
         "verdicts_path": str(verdicts_path),
         "verdicts_rows": len(verdicts),
     }

@@ -17,11 +17,26 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from jev_or_not.common import read_jsonl, write_lines_atomic
+from jev_or_not.catalog import read_episodes
+from jev_or_not.common import (
+    episode_sort_key,
+    parse_episode_numbers,
+    read_jsonl,
+    tally,
+    write_lines_atomic,
+)
 from jev_or_not.fingerprint import fingerprint
-from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
+from jev_or_not.ledger import (
+    claim,
+    complete,
+    ensure_task,
+    fail,
+    latest_successes,
+    open_ledger,
+    task_status,
+)
 from jev_or_not.models import EnrolledIndexEntry
-from jev_or_not.transcribe import _worker_env
+from jev_or_not.transcribe import WORKER_SOURCES, _worker_env, worker_code_hash
 
 INDEX_PATH = Path("data/transcript_index.jsonl")
 MANIFEST_PATH = Path("data/audio_manifest.jsonl")
@@ -31,7 +46,10 @@ ENROLLMENT_PATH = Path("data/enrollment.json")
 JOHN_WAV = Path("local/enroll/john.wav")
 JASON_WAV = Path("local/enroll/jason.wav")
 HOST_EMBEDDINGS_PATH = Path("data/enrollment_embeddings.json")
-APPLY_MODULE = Path("transcription/src/transcription_worker/enroll_apply.py")
+# enroll_apply runs the worker's enroll.py (host assignment, embedding) on top
+# of the transcription modules it imports; a change to any of them, or to the
+# worker lockfile, must invalidate enrolled outputs.
+APPLY_SOURCES = (*WORKER_SOURCES, "enroll.py", "enroll_apply.py")
 
 TIMEOUT_S = 10 * 60
 WORKER_CMD_PREFIX = [
@@ -76,16 +94,12 @@ def enrollment_hash(
     )
 
 
-def code_hash(path: Path = APPLY_MODULE) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _thresholds_status(enrollment_path: Path = ENROLLMENT_PATH) -> str:
     try:
         data = json.loads(enrollment_path.read_text())
     except OSError, json.JSONDecodeError:
         return "provisional"
-    return data.get("thresholds", {}).get("status", "provisional")
+    return (data.get("thresholds") or {}).get("status", "provisional")
 
 
 def apply_one(
@@ -125,10 +139,7 @@ def apply_one(
     item_id = f"{episode_id}|{candidate}"
     task_id = ensure_task(conn, "enroll", item_id, fp)
     if not claim(conn, task_id):
-        status = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[
-            0
-        ]
-        return {**ident, "status": "skipped", "reason": status}
+        return {**ident, "status": "skipped", "reason": task_status(conn, task_id)}
 
     apply_dir.mkdir(parents=True, exist_ok=True)
     tmp_output = apply_dir / f"{episode_label}-{candidate}.json.tmp"
@@ -193,26 +204,22 @@ def apply_one(
     }
 
 
-def export_index(conn, index_rows: list[dict]) -> list[EnrolledIndexEntry]:
+def export_index(
+    conn, index_rows: list[dict], number_by_id: dict[str, int | None] | None = None
+) -> list[EnrolledIndexEntry]:
     """The newest successful enrollment application per (episode, candidate).
 
     ``index_rows`` is the full ``data/transcript_index.jsonl`` content, used
     to look up the episode_label and transcript_hash a ledger task's item_id
-    alone doesn't carry.
+    alone doesn't carry. ``number_by_id`` (episode_id -> catalog episode
+    number) orders rows like every other phase; unknown ids sort last.
     """
+    number_by_id = number_by_id or {}
     by_key = {(r["episode_id"], r["candidate"]): r for r in index_rows}
     status = _thresholds_status()
 
-    latest: dict[str, tuple[str, dict]] = {}
-    for task in successes(conn, "enroll"):
-        if not Path(task["result_path"]).exists():
-            continue  # ledger is a rebuildable cache; a missing file just drops that row
-        prev = latest.get(task["item_id"])
-        if prev is None or task["updated_at"] > prev[0]:
-            latest[task["item_id"]] = (task["updated_at"], task)
-
     rows = []
-    for _, task in latest.values():
+    for task in latest_successes(conn, "enroll"):
         path = Path(task["result_path"])
         raw = path.read_bytes()
         output = json.loads(raw)
@@ -257,16 +264,14 @@ def export_index(conn, index_rows: list[dict]) -> list[EnrolledIndexEntry]:
             )
         )
 
-    rows.sort(key=lambda r: (r.episode_label, r.candidate))
+    rows.sort(
+        key=lambda r: (
+            *episode_sort_key(number_by_id.get(r.episode_id), r.episode_label),
+            r.candidate,
+        )
+    )
     write_lines_atomic(ENROLLED_INDEX_PATH, (r.model_dump_json() for r in rows))
     return rows
-
-
-def _label_num(episode_label: str) -> int | None:
-    try:
-        return int(episode_label)
-    except ValueError:
-        return None
 
 
 def run(
@@ -284,21 +289,21 @@ def run(
     the gitignored local/ audio) -- enrollment_hash() raises clearly if
     neither is present."""
     ehash = enrollment_hash()
-    chash = code_hash()
+    chash = worker_code_hash(APPLY_SOURCES)
 
     index_rows = list(read_jsonl(INDEX_PATH))
     manifest_by_id = {m["episode_id"]: m for m in read_jsonl(MANIFEST_PATH)}
+    number_by_id = {e.episode_id: e.episode for e in read_episodes()}
 
     selected = [
         r for r in index_rows if r["candidate"] == candidate and r["episode_id"] in manifest_by_id
     ]
     if episodes_arg:
-        wanted = {int(x) for x in episodes_arg.split(",") if x.strip()}
-        selected = [r for r in selected if _label_num(r["episode_label"]) in wanted]
+        wanted = set(parse_episode_numbers(episodes_arg))
+        selected = [r for r in selected if number_by_id.get(r["episode_id"]) in wanted]
 
     def sort_key(r: dict) -> tuple:
-        n = _label_num(r["episode_label"])
-        return (n is None, n or 0)
+        return episode_sort_key(number_by_id.get(r["episode_id"]), r["episode_label"])
 
     selected.sort(key=sort_key)
 
@@ -321,20 +326,13 @@ def run(
             results.append(result)
             if on_result is not None:
                 on_result(result)
-        index_out = export_index(conn, index_rows)
+        index_out = export_index(conn, index_rows, number_by_id)
     finally:
         conn.close()
 
-    succeeded = [r for r in results if r["status"] == "success"]
-    failed = [r for r in results if r["status"] == "failed"]
-    skipped = [r for r in results if r["status"] == "skipped"]
-
     return {
         "transcripts": len(selected),
-        "success": len(succeeded),
-        "failed": len(failed),
-        "skipped": len(skipped),
-        "failures": failed,
+        **tally(results),
         "results": results,
         "index_path": str(ENROLLED_INDEX_PATH),
         "index_rows": len(index_out),
