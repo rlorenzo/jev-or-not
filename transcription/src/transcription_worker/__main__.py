@@ -33,7 +33,10 @@ REQUIRED_REQUEST_FIELDS = (
     "schema_version",
 )
 
-CANDIDATES = ("A", "B")  # A = mlx-whisper large-v3, B = parakeet-mlx tdt-0.6b-v3
+# A = mlx-whisper large-v3 (defaults), A2 = the same with params.decode
+# overrides, B = parakeet-mlx tdt-0.6b-v3.
+CANDIDATES = ("A", "A2", "B")
+WHISPER_CANDIDATES = ("A", "A2")
 SCHEMA_VERSION = 1
 
 
@@ -55,6 +58,21 @@ def validate_request(request: dict) -> list[str]:
     params = request["params"]
     if not isinstance(params, dict) or not params.get("model"):
         errors.append("params.model is required")
+    elif "decode" in params:
+        decode = params["decode"]
+        if request["candidate"] not in WHISPER_CANDIDATES:
+            errors.append("params.decode is only supported for mlx-whisper candidates")
+        elif not isinstance(decode, dict):
+            errors.append("params.decode must be an object")
+        else:
+            unknown = sorted(set(decode) - set(engines.WHISPER_DECODE_OPTIONS))
+            if unknown:
+                errors.append(f"params.decode has unsupported keys: {unknown}")
+            # Checked strictly: a JSON string "false" would be truthy and
+            # silently leave conditioning on.
+            for key, expected in engines.WHISPER_DECODE_OPTIONS.items():
+                if key in decode and type(decode[key]) is not expected:
+                    errors.append(f"params.decode.{key} must be {expected.__name__}")
 
     diar = request["diarization"]
     if not isinstance(diar, dict) or not diar.get("pipeline"):
@@ -110,9 +128,9 @@ def _run(request: dict, audio_path: str) -> dict:
     warnings: list[str] = []
 
     t0 = time.time()
-    if request["candidate"] == "A":
+    if request["candidate"] in WHISPER_CANDIDATES:
         words, engine_meta = engines.transcribe_mlx_whisper(
-            audio_path, params["model"], params.get("initial_prompt")
+            audio_path, params["model"], params.get("initial_prompt"), params.get("decode")
         )
     else:
         if params.get("initial_prompt"):

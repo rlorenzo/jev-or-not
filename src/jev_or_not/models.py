@@ -6,6 +6,9 @@ from pydantic import BaseModel, field_validator
 # Ruling, and extract.ExtractedRuling so they cannot drift.
 Verdict = Literal["yes", "no", "ambiguous", "no_ruling"]
 VerdictStrength = Literal["firm", "hedged", "reversed_during_episode"]
+# Transcription candidate id; mirrors transcribe.CANDIDATES (which imports
+# this module, so the set cannot be derived from it here).
+Candidate = Literal["A", "A2", "B"]
 
 
 class Record(BaseModel):
@@ -123,7 +126,7 @@ class TranscriptIndexEntry(Record):
 
     episode_id: str
     episode_label: str
-    candidate: Literal["A", "B"]
+    candidate: Candidate
     transcript_path: str
     transcript_hash: str
     fingerprint: str
@@ -156,7 +159,7 @@ class EnrolledIndexEntry(Record):
 
     episode_id: str
     episode_label: str
-    candidate: Literal["A", "B"]
+    candidate: Candidate
     enrolled_path: str
     enrolled_hash: str
     transcript_hash: str

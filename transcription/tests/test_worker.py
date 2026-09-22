@@ -5,12 +5,14 @@ Run: uv run --project transcription/ python transcription/tests/test_worker.py
 
 import hashlib
 import json
+import sys
 import tempfile
+import types
 from pathlib import Path
 
 import numpy as np
 
-from transcription_worker import ffmpeg
+from transcription_worker import engines, ffmpeg
 from transcription_worker.__main__ import main, validate_request, verify_audio_hash
 from transcription_worker.assign import assign_word_cluster, build_segments
 from transcription_worker.enroll import (
@@ -53,6 +55,64 @@ def test_validate_request() -> None:
         assert validate_request({**req, "diarization": {}}) != []
         bad_diar = {**req["diarization"], "min_speakers": "two"}
         assert validate_request({**req, "diarization": bad_diar}) != []
+
+
+def test_validate_request_decode_options() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        audio = Path(tmp) / "audio.wav"
+        audio.write_bytes(b"fake")
+        req = {**_valid_request(str(audio)), "candidate": "A2"}
+        params = req["params"]
+        ok = {**params, "decode": {"condition_on_previous_text": False}}
+        assert validate_request({**req, "params": ok}) == []
+        bad_key = {**params, "decode": {"temperature": 0.0}}
+        assert validate_request({**req, "params": bad_key}) != []
+        str_bool = {**params, "decode": {"condition_on_previous_text": "false"}}
+        assert validate_request({**req, "params": str_bool}) != []
+        not_dict = {**params, "decode": [("condition_on_previous_text", False)]}
+        assert validate_request({**req, "params": not_dict}) != []
+        # parakeet has no such knobs; decode on B is a request bug, not a no-op
+        assert validate_request({**req, "candidate": "B", "params": ok}) != []
+
+
+def test_transcribe_mlx_whisper_passes_decode_options() -> None:
+    calls: list[dict] = []
+
+    def fake_transcribe(audio_path, **kwargs):
+        calls.append(kwargs)
+        return {"segments": [{"words": [{"start": 0.0, "end": 0.4, "word": " Hi"}]}]}
+
+    fake = types.ModuleType("mlx_whisper")
+    fake.transcribe = fake_transcribe
+    saved = sys.modules.get("mlx_whisper")
+    sys.modules["mlx_whisper"] = fake
+    try:
+        words, _ = engines.transcribe_mlx_whisper(
+            "a.wav", "m", "Siracusa", {"condition_on_previous_text": False}
+        )
+        engines.transcribe_mlx_whisper("a.wav", "m")
+        try:
+            engines.transcribe_mlx_whisper("a.wav", "m", None, {"beam_size": 5})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsupported decode option was accepted")
+    finally:
+        if saved is None:
+            sys.modules.pop("mlx_whisper")
+        else:
+            sys.modules["mlx_whisper"] = saved
+
+    assert words == [{"start": 0.0, "end": 0.4, "text": " Hi"}]
+    assert calls[0] == {
+        "path_or_hf_repo": "m",
+        "word_timestamps": True,
+        "initial_prompt": "Siracusa",
+        "condition_on_previous_text": False,
+    }
+    # candidate A: Whisper defaults, no decode keys sent at all
+    assert calls[1] == {"path_or_hf_repo": "m", "word_timestamps": True}
+    assert len(calls) == 2
 
 
 def test_assign_word_cluster() -> None:
@@ -270,6 +330,8 @@ def test_host_embeddings_round_trip() -> None:
 
 def demo() -> None:
     test_validate_request()
+    test_validate_request_decode_options()
+    test_transcribe_mlx_whisper_passes_decode_options()
     test_assign_word_cluster()
     test_build_segments()
     test_sha256_mismatch()

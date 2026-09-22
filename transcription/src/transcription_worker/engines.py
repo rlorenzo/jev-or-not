@@ -42,22 +42,40 @@ def _hf_revision(repo_id: str) -> str | None:
     return None
 
 
+# Extra mlx_whisper.transcribe() keyword arguments a request may set via
+# params.decode, mapped to the type each must have. Each is a named
+# keyword-only parameter of transcribe() in the installed 0.4.3 package
+# (transcribe.py:62-78):
+#   condition_on_previous_text: bool = True — feed the previous window's text
+#     as the next window's prompt; False makes it "less prone to getting stuck
+#     in a failure loop, such as repetition looping" (its docstring).
+WHISPER_DECODE_OPTIONS: dict[str, type] = {"condition_on_previous_text": bool}
+
+
 def transcribe_mlx_whisper(
-    audio_path: str, model: str, initial_prompt: str | None = None
+    audio_path: str,
+    model: str,
+    initial_prompt: str | None = None,
+    decode: dict | None = None,
 ) -> tuple[list[dict], dict]:
-    """Candidate A: mlx-whisper large-v3 with word-level timestamps.
+    """Candidates A/A2: mlx-whisper large-v3 with word-level timestamps.
 
     API: https://pypi.org/project/mlx-whisper/
     `mlx_whisper.transcribe(audio, path_or_hf_repo=..., word_timestamps=True,
     initial_prompt=...)` — signature confirmed in
     transcribe.py:62-78 of the installed 0.4.3 package (initial_prompt is a
-    real, supported kwarg, not undocumented).
+    real, supported kwarg, not undocumented). ``decode`` adds any of
+    WHISPER_DECODE_OPTIONS on top.
     """
     import mlx_whisper
 
     kwargs = {"path_or_hf_repo": model, "word_timestamps": True}
     if initial_prompt:
         kwargs["initial_prompt"] = initial_prompt
+    for key, value in (decode or {}).items():
+        if key not in WHISPER_DECODE_OPTIONS:
+            raise ValueError(f"unsupported mlx-whisper decode option: {key!r}")
+        kwargs[key] = value
     result = mlx_whisper.transcribe(audio_path, **kwargs)
 
     words = [

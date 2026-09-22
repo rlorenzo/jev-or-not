@@ -135,6 +135,15 @@ def test_candidate_b_gets_no_initial_prompt():
     assert "prompt_supported" not in request["params"]  # config, not a worker param
 
 
+def test_candidate_a_keeps_whisper_defaults_and_a2_disables_conditioning():
+    a = build_request(_episode(), _manifest_entry(), "A", SCORECARD_ROWS)["params"]
+    a2 = build_request(_episode(), _manifest_entry(), "A2", SCORECARD_ROWS)["params"]
+
+    # A's params must not grow a decode key: it is the Whisper-defaults baseline.
+    assert set(a) == {"model", "initial_prompt"}
+    assert a2 == {**a, "decode": {"condition_on_previous_text": False}}
+
+
 def _fake_worker_tree(tmp_path: Path) -> Path:
     worker = tmp_path / "transcription_worker"
     worker.mkdir()

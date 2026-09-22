@@ -10,6 +10,8 @@ from jev_or_not import transcribe as transcribe_module
 
 app = typer.Typer(no_args_is_help=True)
 
+CANDIDATE_HELP = "one of " + ", ".join(transcribe_module.CANDIDATES)
+
 
 def _not_implemented(force: bool = typer.Option(False, "--force")) -> None:
     typer.echo("not implemented")
@@ -86,7 +88,7 @@ def _worker_progress(r: dict) -> None:
 
 @app.command("transcribe")
 def transcribe_cmd(
-    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    candidate: str = typer.Option(..., "--candidate", help=CANDIDATE_HELP),
     pilot_only: bool = typer.Option(True, "--pilot-only/--no-pilot-only"),
     all_episodes: bool = typer.Option(False, "--all"),
     episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
@@ -118,7 +120,7 @@ def transcribe_cmd(
 
 @app.command("enroll")
 def enroll_cmd(
-    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    candidate: str = typer.Option(..., "--candidate", help=CANDIDATE_HELP),
     episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
     floor: float = typer.Option(enroll_module.DEFAULT_FLOOR, "--floor"),
     margin: float = typer.Option(enroll_module.DEFAULT_MARGIN, "--margin"),
@@ -149,7 +151,7 @@ app.add_typer(extract_app, name="extract")
 
 @extract_app.command("prepare")
 def extract_prepare_cmd(
-    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    candidate: str = typer.Option(..., "--candidate", help=CANDIDATE_HELP),
     model: str = typer.Option(..., "--model", help="sonnet or haiku"),
     episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
 ) -> None:
@@ -162,7 +164,7 @@ def extract_prepare_cmd(
 
 @extract_app.command("ingest")
 def extract_ingest_cmd(
-    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    candidate: str = typer.Option(..., "--candidate", help=CANDIDATE_HELP),
     model: str = typer.Option(..., "--model", help="sonnet or haiku"),
 ) -> None:
     """Phase 3: validate subagent output.json packets and append accepted rulings."""

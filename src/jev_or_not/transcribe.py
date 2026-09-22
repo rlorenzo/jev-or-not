@@ -68,9 +68,22 @@ BASE_TERMS = ["Siracusa", "Snell", "Incomparable", "Roomba", "droid", "Daleks"]
 # whether the engine accepts an ``initial_prompt``; parakeet-mlx has no prompt
 # API, so the worker would only warn and drop one. The prompt itself is
 # per-episode (base terms + that episode's scorecard subjects), so it is built
-# in _build_params rather than kept static here.
+# in _build_params rather than kept static here. ``decode`` is passed through
+# to the engine as extra decoding kwargs; it is omitted when empty so A's
+# params (and so its fingerprint inputs) stay exactly as before.
+#
+# A2 is A with ``condition_on_previous_text=False``: with the default True,
+# Whisper loops on the "Robot or not?" theme jingle and emits it in place of
+# the speech under it (episodes 1 and 300 lose most of their words). A stays
+# on Whisper defaults as the baseline so the bake-off separates the setting's
+# effect from the model's.
 CANDIDATES: dict[str, dict] = {
     "A": {"model": "mlx-community/whisper-large-v3-mlx", "prompt_supported": True},
+    "A2": {
+        "model": "mlx-community/whisper-large-v3-mlx",
+        "prompt_supported": True,
+        "decode": {"condition_on_previous_text": False},
+    },
     "B": {"model": "mlx-community/parakeet-tdt-0.6b-v3", "prompt_supported": False},
 }
 DIARIZATION = {"pipeline": "pyannote/speaker-diarization-community-1"}
@@ -108,6 +121,8 @@ def _build_params(candidate: str, term_list: list[str]) -> dict:
     params = {"model": spec["model"]}
     if spec["prompt_supported"]:
         params["initial_prompt"] = ", ".join(term_list)
+    if spec.get("decode"):
+        params["decode"] = dict(spec["decode"])
     return params
 
 
