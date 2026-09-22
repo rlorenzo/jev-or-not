@@ -1,5 +1,7 @@
 import typer
 
+from jev_or_not import catalog as catalog_module
+from jev_or_not import download as download_module
 from jev_or_not import pilot as pilot_module
 from jev_or_not import scorecard as scorecard_module
 
@@ -35,9 +37,36 @@ def scorecard_cmd(force: bool = typer.Option(False, "--force")) -> None:
         )
 
 
+@app.command("catalog")
+def catalog_cmd(force: bool = typer.Option(False, "--force")) -> None:
+    """Phase 1 steps 1-4: fetch feed + archive, build episodes.jsonl, cross-reference scorecard."""
+    summary = catalog_module.run(force=force)
+    state = "reused (fingerprint match)" if summary["reused"] else "rebuilt"
+    typer.echo(
+        f"catalog: {summary['episodes']} episodes {state}; "
+        f"{summary['new_adjudication_entries']} adjudication entries appended "
+        f"(raw fetch: {summary['local_dir']})"
+    )
+
+
+@app.command("download")
+def download_cmd(
+    pilot_only: bool = typer.Option(False, "--pilot-only"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Phase 1 step 5: download episode audio to local/audio/ (gitignored)."""
+    summary = download_module.run(pilot_only=pilot_only, force=force)
+    typer.echo(
+        f"download: {summary['downloaded']} downloaded, {summary['skipped']} skipped, "
+        f"{summary['failed']} failed of {summary['candidates']} candidates "
+        f"({summary['bytes_downloaded']} bytes); manifest: {summary['manifest_path']} "
+        f"({summary['manifest_rows']} rows, {len(summary['mismatches'])} duration mismatches)"
+    )
+    for r in summary["failures"]:
+        typer.echo(f"  FAILED {r['episode_label']} ({r['reason']}): {r['error']}")
+
+
 for _name in (
-    "catalog",
-    "download",
     "transcribe",
     "extract",
     "questions",

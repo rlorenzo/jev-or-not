@@ -57,13 +57,20 @@ def ensure_task(conn: sqlite3.Connection, phase: str, item_id: str, fingerprint:
     return task_id
 
 
-def claim(conn: sqlite3.Connection, task_id: str) -> bool:
-    """Atomically claim a task. True if this call won the claim."""
+STALE_CLAIM_SECONDS = 3600  # a claim older than this is a crashed run, not a live one
+
+
+def claim(conn: sqlite3.Connection, task_id: str, stale_after_s: int = STALE_CLAIM_SECONDS) -> bool:
+    """Atomically claim a task. True if this call won the claim.
+
+    Stale claims (a process that died between claim and complete/fail) are re-claimable.
+    """
     cur = conn.execute(
         "UPDATE tasks SET status = 'claimed', attempts = attempts + 1, "
         "claimed_at = datetime('now'), updated_at = datetime('now') "
-        "WHERE task_id = ? AND status IN ('pending', 'failed')",
-        (task_id,),
+        "WHERE task_id = ? AND (status IN ('pending', 'failed') "
+        "OR (status = 'claimed' AND claimed_at <= datetime('now', ?)))",
+        (task_id, f"-{stale_after_s} seconds"),
     )
     conn.commit()
     return cur.rowcount > 0

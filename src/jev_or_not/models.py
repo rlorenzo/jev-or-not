@@ -81,3 +81,51 @@ class PilotReference(Record):
         if start is not None and v <= start:
             raise ValueError("ruling_end_s must be greater than ruling_start_s")
         return v
+
+
+class Episode(Record):
+    """One episode reconciled from the RSS feed and/or the archive index.
+
+    See PLAN.md Phase 1 steps 1-3. ``episode_id`` is the feed guid when the
+    episode came from the feed, else a namespaced archive URL for
+    archive-only entries.
+    """
+
+    episode_id: str
+    episode: int | None
+    episode_label: str
+    title: str
+    released_at: str | None
+    description: str
+    show_notes_url: str
+    audio_url: str
+    duration_s: int | None
+    source: str  # "feed" | "archive" | "both"
+    retrieved_at: str
+    aliases: list[str] = []
+    excluded: bool = False
+    exclusion_reason: str | None = None
+    blocked: bool = False
+    review_queue: list[str] = []
+
+
+class AudioManifestEntry(Record):
+    """One downloaded episode audio file (PLAN.md Phase 1 step 5).
+
+    Exported from the download ledger's successful tasks only; see
+    ``jev_or_not.download.export_manifest``.
+    """
+
+    episode_id: str
+    episode_label: str
+    audio_url: str
+    resolved_url: str
+    file_path: str
+    bytes: int
+    sha256: str
+    content_type: str
+    measured_duration_s: float | None
+    feed_duration_s: int | None
+    duration_mismatch: bool
+    downloaded_at: str
+    status: str

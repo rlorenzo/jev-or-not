@@ -16,3 +16,11 @@ def test_claim_once_and_successes(tmp_path):
 
     rows = ledger.successes(conn, "catalog")
     assert [r["task_id"] for r in rows] == [task_id]
+
+
+def test_stale_claim_is_reclaimable(tmp_path):
+    conn = ledger.open_ledger(str(tmp_path / "ledger.sqlite"))
+    task_id = ledger.ensure_task(conn, "download", "ep-1", "fp-1")
+    assert ledger.claim(conn, task_id) is True
+    assert ledger.claim(conn, task_id) is False  # live claim holds
+    assert ledger.claim(conn, task_id, stale_after_s=0) is True  # crashed run: reclaim
