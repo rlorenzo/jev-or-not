@@ -4,13 +4,14 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from typing import get_args
 from unittest.mock import patch
 
 import pytest
 
 from jev_or_not import transcribe as transcribe_module
 from jev_or_not.ledger import open_ledger
-from jev_or_not.models import AudioManifestEntry, Episode
+from jev_or_not.models import AudioManifestEntry, Candidate, Episode
 from jev_or_not.transcribe import (
     WORKER_SOURCES,
     build_request,
@@ -142,6 +143,11 @@ def test_candidate_a_keeps_whisper_defaults_and_a2_disables_conditioning():
     # A's params must not grow a decode key: it is the Whisper-defaults baseline.
     assert set(a) == {"model", "initial_prompt"}
     assert a2 == {**a, "decode": {"condition_on_previous_text": False}}
+
+
+def test_candidate_literal_matches_candidates():
+    # models.Candidate is hand-copied (import cycle); catch drift here.
+    assert set(get_args(Candidate)) == set(transcribe_module.CANDIDATES)
 
 
 def _fake_worker_tree(tmp_path: Path) -> Path:

@@ -38,6 +38,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer's documented idiom puts typer.Option/Argument in parameter defaults.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 [tool.vulture]
 paths = ["src", "tests"]
 min_confidence = 80

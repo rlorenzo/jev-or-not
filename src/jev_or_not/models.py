@@ -7,7 +7,7 @@ from pydantic import BaseModel, field_validator
 Verdict = Literal["yes", "no", "ambiguous", "no_ruling"]
 VerdictStrength = Literal["firm", "hedged", "reversed_during_episode"]
 # Transcription candidate id; mirrors transcribe.CANDIDATES (which imports
-# this module, so the set cannot be derived from it here).
+# this module, so the set cannot be derived from it here; a test pins the two).
 Candidate = Literal["A", "A2", "B"]
 
 
