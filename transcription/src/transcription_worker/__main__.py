@@ -17,9 +17,10 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 
-from transcription_worker import assign, diarize, engines
+from transcription_worker import assign, diarize, engines, ffmpeg
 
 REQUIRED_REQUEST_FIELDS = (
     "episode_id",
@@ -65,13 +66,18 @@ def validate_request(request: dict) -> list[str]:
     return errors
 
 
-def verify_audio_hash(audio_path: str, expected_sha256: str) -> str | None:
-    """Returns an error string on mismatch, else None."""
+def sha256_file(path: str) -> str:
+    """sha256 of a file's contents, read in 1 MiB chunks."""
     h = hashlib.sha256()
-    with open(audio_path, "rb") as f:
+    with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    actual = h.hexdigest()
+    return h.hexdigest()
+
+
+def verify_audio_hash(audio_path: str, expected_sha256: str) -> str | None:
+    """Returns an error string on mismatch, else None."""
+    actual = sha256_file(audio_path)
     if actual != expected_sha256:
         return f"audio_sha256 mismatch: expected {expected_sha256}, got {actual}"
     return None
@@ -86,8 +92,19 @@ def write_atomic(path: str, data: dict) -> None:
 
 def run(request: dict) -> dict:
     """Runs the full pipeline and returns the output dict. Raises on any
-    failure; caller is responsible for not writing output when this raises."""
-    audio_path = request["audio_path"]
+    failure; caller is responsible for not writing output when this raises.
+
+    Everything downstream reads one pre-decoded WAV: pyannote's own MP3
+    decoding returns short chunks ("requested chunk ... resulted in N samples
+    instead of the expected M"), and decoding once also spares the engine and
+    the diarizer a duplicate pass over the same audio.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        wav_path = ffmpeg.to_wav(request["audio_path"], os.path.join(tmp, "audio.wav"))
+        return _run(request, wav_path)
+
+
+def _run(request: dict, audio_path: str) -> dict:
     params = request["params"]
     diar_req = request["diarization"]
     warnings: list[str] = []

@@ -26,12 +26,12 @@ from pathlib import Path
 
 import httpx
 
-from jev_or_not.catalog import read_episodes
+from jev_or_not.catalog import eligible_episodes, read_episodes
 from jev_or_not.common import USER_AGENT, episode_sort_key, write_lines_atomic
 from jev_or_not.fingerprint import file_hash, fingerprint
 from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
 from jev_or_not.models import AudioManifestEntry, Episode
-from jev_or_not.pilot import PILOT_PATH
+from jev_or_not.pilot import pilot_episode_ids
 
 CODE_VERSION = "download-v1"
 SCHEMA_VERSION = 1
@@ -238,8 +238,8 @@ def export_manifest(conn: sqlite3.Connection, episodes: list[Episode]) -> list[A
 
 def _select_episodes(episodes: list[Episode], pilot_only: bool) -> list[Episode]:
     """Non-excluded, non-blocked episodes; pilot episodes first (or only)."""
-    candidates = [e for e in episodes if not e.excluded and not e.blocked]
-    pilot_ids = {pe["episode_id"] for pe in json.loads(PILOT_PATH.read_text())["episodes"]}
+    candidates = eligible_episodes(episodes)
+    pilot_ids = pilot_episode_ids()
 
     def sort_key(e: Episode) -> tuple:
         return episode_sort_key(e.episode, e.episode_label)

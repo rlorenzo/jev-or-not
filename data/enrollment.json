@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "confirmed",
+  "source_episode_id": "theincomparable/robot/3",
+  "source_episode": 3,
+  "audio_sha256": "0c60a2cf9207fbcd6ade7944665609c93771339d4f29de1f882283ae8b3e05b8",
+  "sample_rate": 16000,
+  "candidates": [
+    {
+      "cluster": "SPEAKER_00",
+      "proposed_host": "john",
+      "wav_path": "local/enroll/candidate_SPEAKER_00.wav",
+      "start_s": 75.175,
+      "end_s": 94.885,
+      "duration_s": 19.71,
+      "transcript_preview": "Yeah, yeah, I mean it's funny. The six million dollar man was based on a book called Cyborg and and i is it the is it the um is it like uh computer intelligence or or or is it the is it that pure integration that makes the difference between something that's just sort of a basic prosthetic? This is something that's really gonna we we're really gonna deal with. I think cyborg is just a dirty word and nobody wants to call somebody a cyborg, but yeah.",
+      "confirmed_wav_path": "local/enroll/jason.wav",
+      "confirmed_host": "jason"
+    },
+    {
+      "cluster": "SPEAKER_01",
+      "proposed_host": "jason",
+      "wav_path": "local/enroll/candidate_SPEAKER_01.wav",
+      "start_s": 25.411,
+      "end_s": 74.77,
+      "duration_s": 49.359,
+      "transcript_preview": "Again, we don't know the extent of the the hid the replacement. You know, even if there was a movie that showed us the supposed extent of his replacement, which of course there is not. Um it's you don't know like how invasive it is because if it's just if it's just a matter of like replacing limbs, we don't call people who like lose a limb and then get an artificial limb. We don't call them cyborgs because it's just like, well, you",
+      "confirmed_wav_path": "local/enroll/john.wav",
+      "confirmed_host": "john"
+    }
+  ],
+  "confirmed": {
+    "SPEAKER_01": "john",
+    "SPEAKER_00": "jason"
+  },
+  "thresholds": null,
+  "created_at": "2026-09-22T09:22:30.204374+00:00",
+  "confirmed_at": "2026-09-22T14:51:12.994189+00:00"
+}

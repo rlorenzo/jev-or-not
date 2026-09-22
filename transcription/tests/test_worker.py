@@ -8,8 +8,16 @@ import json
 import tempfile
 from pathlib import Path
 
+import numpy as np
+from transcription_worker import ffmpeg
 from transcription_worker.__main__ import main, validate_request, verify_audio_hash
 from transcription_worker.assign import assign_word_cluster, build_segments
+from transcription_worker.enroll import (
+    _merge_turns,
+    assign_hosts,
+    longest_stretch,
+    reserved_episodes,
+)
 
 
 def _valid_request(audio_path: str) -> dict:
@@ -100,12 +108,107 @@ def test_missing_field_no_output() -> None:
         assert not bad_out.exists()
 
 
+def test_merge_turns() -> None:
+    # 0.1s gap merges, 0.6s gap doesn't
+    assert _merge_turns([(0.0, 1.0), (1.1, 2.0), (2.6, 3.0)], max_gap=0.5) == [
+        (0.0, 2.0),
+        (2.6, 3.0),
+    ]
+    assert _merge_turns([], max_gap=0.5) == []
+    # unsorted input still merges correctly
+    assert _merge_turns([(2.0, 3.0), (0.0, 1.0)], max_gap=0.5) == [(0.0, 1.0), (2.0, 3.0)]
+
+
+def test_longest_stretch() -> None:
+    diar = [
+        (0.0, 1.0, "A"),
+        (1.1, 2.0, "A"),  # merges with the above -> 0.0-2.0 (2.0s)
+        (5.0, 5.5, "B"),  # isolated -> 0.5s
+        (10.0, 200.0, "A"),  # isolated, long -> capped at 60s
+    ]
+    assert longest_stretch(diar, "A", max_gap=0.5, cap_s=60.0) == (10.0, 70.0)
+    assert longest_stretch(diar, "B", max_gap=0.5, cap_s=60.0) == (5.0, 5.5)
+    assert longest_stretch(diar, "C", max_gap=0.5, cap_s=60.0) is None
+
+
+def test_assign_hosts() -> None:
+    john = np.array([1.0, 0.0])
+    jason = np.array([0.0, 1.0])
+    hosts = {"john": john, "jason": jason}
+
+    # clear match
+    clear = assign_hosts({"c1": np.array([0.99, 0.14])}, hosts, floor=0.5, margin=0.2)
+    assert clear["c1"]["label"] == "john"
+
+    # below floor for both -> GUEST
+    guest_vec = np.array([-1.0, -1.0])  # negative cosine to both hosts
+    below = assign_hosts({"c2": guest_vec}, hosts, floor=0.5, margin=0.2)
+    assert below["c2"]["label"] == "GUEST"
+
+    # clears the floor but top two are close -> UNKNOWN
+    close = np.array([1.0, 0.95])
+    unk = assign_hosts({"c3": close}, hosts, floor=0.5, margin=0.2)
+    assert unk["c3"]["label"] == "UNKNOWN"
+
+    # determinism: same input, same output across repeated calls
+    r1 = assign_hosts({"c1": np.array([0.99, 0.14])}, hosts, floor=0.5, margin=0.2)
+    r2 = assign_hosts({"c1": np.array([0.99, 0.14])}, hosts, floor=0.5, margin=0.2)
+    assert r1 == r2
+
+
+def _captured_ffmpeg_argv(**kwargs) -> list[str]:
+    """Run ffmpeg.to_wav with the subprocess call stubbed out; return the argv."""
+    captured: list[list[str]] = []
+
+    class _Done:
+        returncode = 0
+        stderr = ""
+
+    real_run = ffmpeg.subprocess.run
+    ffmpeg.subprocess.run = lambda cmd, **_: (captured.append(cmd), _Done())[1]
+    try:
+        ffmpeg.to_wav("in.mp3", "out.wav", **kwargs)
+    finally:
+        ffmpeg.subprocess.run = real_run
+    return captured[0]
+
+
+def test_ffmpeg_to_wav_argv() -> None:
+    # Untrimmed: 16 kHz mono, no seek flags.
+    argv = _captured_ffmpeg_argv()
+    assert argv[0] == ffmpeg.FFMPEG
+    assert argv[-5:] == ["-ac", "1", "-ar", "16000", "out.wav"]
+    assert "-ss" not in argv and "-to" not in argv
+
+    # Trimmed: -ss/-to come after -i so the seek is frame-accurate.
+    argv = _captured_ffmpeg_argv(start=1.5, end=3.25)
+    assert argv[argv.index("-ss") + 1] == "1.500"
+    assert argv[argv.index("-to") + 1] == "3.250"
+    assert argv.index("-i") < argv.index("-ss")
+
+    # A start with no end is allowed (cut to the end of the file).
+    argv = _captured_ffmpeg_argv(start=2.0)
+    assert "-ss" in argv and "-to" not in argv
+
+
+def test_reserved_episodes_comes_from_the_gold_files() -> None:
+    reserved = reserved_episodes()
+    assert {0, 297} <= reserved  # hand-excluded compilations
+    assert {1, 6} <= reserved  # pinned pilot episodes
+    assert 3 not in reserved  # the episode enrollment actually used
+
+
 def demo() -> None:
     test_validate_request()
     test_assign_word_cluster()
     test_build_segments()
     test_sha256_mismatch()
     test_missing_field_no_output()
+    test_merge_turns()
+    test_longest_stretch()
+    test_assign_hosts()
+    test_ffmpeg_to_wav_argv()
+    test_reserved_episodes_comes_from_the_gold_files()
 
 
 if __name__ == "__main__":

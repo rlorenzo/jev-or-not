@@ -109,6 +109,29 @@ class Episode(Record):
     review_queue: list[str] = []
 
 
+class TranscriptIndexEntry(Record):
+    """One successful (episode, candidate) transcription (PLAN.md Phase 2 Output).
+
+    Exported from the transcribe ledger's successful tasks only; see
+    ``jev_or_not.transcribe.export_index``. No transcript text goes here.
+    """
+
+    episode_id: str
+    episode_label: str
+    candidate: Literal["A", "B"]
+    transcript_path: str
+    transcript_hash: str
+    fingerprint: str
+    engine: str
+    model: str
+    diarization_device: str
+    n_segments: int
+    n_clusters: int
+    runtime_total_s: float
+    rtf: float | None
+    created_at: str
+
+
 class AudioManifestEntry(Record):
     """One downloaded episode audio file (PLAN.md Phase 1 step 5).
 

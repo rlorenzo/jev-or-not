@@ -329,6 +329,18 @@ def read_episodes(path: Path = EPISODES_PATH) -> list[Episode]:
     return [Episode(**d) for d in read_jsonl(path)]
 
 
+def eligible_episodes(episodes: list[Episode]) -> list[Episode]:
+    """The episodes every downstream phase works on: neither hand-excluded nor
+    blocked. The one definition of "in scope" for the catalog."""
+    return [e for e in episodes if not e.excluded and not e.blocked]
+
+
+def total_duration_s(episodes: list[Episode]) -> int:
+    """Total runtime of the eligible catalog, in seconds. Feeds both the
+    catalog report and the transcription cost projection."""
+    return sum(e.duration_s or 0 for e in eligible_episodes(episodes))
+
+
 def cross_reference(
     episodes: list[Episode],
     stamp: str,
@@ -402,8 +414,8 @@ def _write_report(
 
     review_entries = [e for e in episodes if e.review_queue]
 
-    non_excluded_non_blocked = [e for e in episodes if not e.excluded and not e.blocked]
-    total_duration = sum(e.duration_s or 0 for e in non_excluded_non_blocked)
+    non_excluded_non_blocked = eligible_episodes(episodes)
+    total_duration = total_duration_s(episodes)
     null_duration = sum(1 for e in non_excluded_non_blocked if e.duration_s is None)
 
     excluded = [e for e in episodes if e.excluded]

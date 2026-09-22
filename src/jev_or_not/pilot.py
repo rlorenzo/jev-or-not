@@ -241,6 +241,11 @@ def run_selection(seed: int = SEED) -> dict:
     return result
 
 
+def pilot_episode_ids() -> set[str]:
+    """The frozen pilot list's episode_ids, for phases that run pilot-first."""
+    return {pe["episode_id"] for pe in json.loads(PILOT_PATH.read_text())["episodes"]}
+
+
 def run(seed: int = SEED, force: bool = False) -> dict:
     """Freeze the pilot list once; a frozen list is never rewritten without --force."""
     if PILOT_PATH.exists() and not force:

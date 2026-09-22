@@ -4,6 +4,7 @@ from jev_or_not import catalog as catalog_module
 from jev_or_not import download as download_module
 from jev_or_not import pilot as pilot_module
 from jev_or_not import scorecard as scorecard_module
+from jev_or_not import transcribe as transcribe_module
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -66,8 +67,51 @@ def download_cmd(
         typer.echo(f"  FAILED {r['episode_label']} ({r['reason']}): {r['error']}")
 
 
+def _transcribe_progress(r: dict) -> None:
+    """One line per episode as it finishes; the run can take hours."""
+    who = f"{r['episode_label']} ({r['candidate']})"
+    if r["status"] == "success":
+        rtf = f"{r['rtf']:.3f}" if r["rtf"] is not None else "n/a"
+        typer.echo(f"{who}: {r['wall_s']:.1f}s wall, rtf={rtf}")
+    elif r["status"] == "failed":
+        typer.echo(f"{who}: FAILED ({r['reason']})")
+    else:
+        typer.echo(f"{who}: skipped ({r['reason']})")
+
+
+@app.command("transcribe")
+def transcribe_cmd(
+    candidate: str = typer.Option(..., "--candidate", help="A or B"),
+    pilot_only: bool = typer.Option(True, "--pilot-only/--no-pilot-only"),
+    all_episodes: bool = typer.Option(False, "--all"),
+    episodes: str | None = typer.Option(None, "--episodes", help="comma-separated episode numbers"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Phase 2: drive the transcription worker per episode with fingerprint reuse."""
+    summary = transcribe_module.run(
+        candidate=candidate,
+        pilot_only=pilot_only,
+        all_=all_episodes,
+        episodes_arg=episodes,
+        force=force,
+        on_result=_transcribe_progress,
+    )
+    rtf_str = f"{summary['overall_rtf']:.3f}" if summary["overall_rtf"] is not None else "n/a"
+    projected_str = (
+        f"{summary['projected_full_s']:.1f}s" if summary["projected_full_s"] is not None else "n/a"
+    )
+    typer.echo(
+        f"transcribe: {summary['success']} succeeded, {summary['skipped']} skipped, "
+        f"{summary['failed']} failed of {summary['episodes']} episodes; "
+        f"wall={summary['total_wall_s']:.1f}s audio={summary['total_audio_s']:.1f}s rtf={rtf_str}; "
+        f"projected full catalog ({summary['catalog_total_s']}s): {projected_str}; "
+        f"index: {summary['index_path']} ({summary['index_rows']} rows)"
+    )
+    for r in summary["failures"]:
+        typer.echo(f"  FAILED {r['episode_label']} ({r['candidate']}): {r['reason']}")
+
+
 for _name in (
-    "transcribe",
     "extract",
     "questions",
     "rubrics",
