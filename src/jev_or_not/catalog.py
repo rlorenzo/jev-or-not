@@ -15,22 +15,30 @@ ever changes.
 
 import contextlib
 import json
-import os
 import re
-import tempfile
+from collections import Counter
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-import httpx
 from defusedxml import ElementTree as ET  # hardened parser for network XML (bandit B314)
 
+from jev_or_not.common import (
+    EXCLUDED_PATH,
+    FEED_URL,
+    ITUNES_NS,
+    episode_sort_key,
+    http_get,
+    page_title,
+    parse_duration,
+    read_excluded,
+    read_jsonl,
+    write_lines_atomic,
+)
 from jev_or_not.fingerprint import file_hash, fingerprint
 from jev_or_not.models import Episode
-from jev_or_not.pilot import FEED_URL, ITUNES_NS, USER_AGENT
-from jev_or_not.pilot import _parse_duration as parse_duration
-from jev_or_not.scorecard import read_adjudication_entries
+from jev_or_not.scorecard import ensure_adjudication_file, read_adjudication_entries
 
 CODE_VERSION = "catalog-v1"
 SCHEMA_VERSION = 1
@@ -41,7 +49,6 @@ LOCAL_DIR = Path("local/catalog")
 EPISODES_PATH = Path("data/episodes.jsonl")
 REPORT_PATH = Path("data/catalog_report.md")
 FINGERPRINT_PATH = Path("data/catalog.fingerprint")
-EXCLUDED_PATH = Path("data/gold/excluded_episodes.json")
 SCORECARD_VERIFIED_PATH = Path("data/gold/scorecard_verified.jsonl")
 ADJUDICATION_PATH = Path("data/gold/adjudication.jsonl")
 
@@ -50,7 +57,6 @@ ARCHIVE_NEXT_RE = re.compile(r'<a[^>]+rel="next"[^>]+href="([^"]+)"')
 URL_EPISODE_RE = re.compile(r"/robot/(\d+)/?$")
 TITLE_EPISODE_RE = re.compile(r"^(\d+):")
 BONUS_EPISODE_RE = re.compile(r"^(\d+)([a-zA-Z]+)$")
-PAGE_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 PAGE_AUDIO_RE = re.compile(r'<audio src="([^"]+)"')
 PAGE_DESCRIPTION_RE = re.compile(r'<meta name="twitter:description" content="([^"]*)"')
 PAGE_DATE_RE = re.compile(r'<span class="episode-date">([^<]*)</span>')
@@ -73,12 +79,6 @@ def strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", "".join(parser.parts)).strip()
 
 
-def _get(url: str) -> httpx.Response:
-    resp = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
-    resp.raise_for_status()
-    return resp
-
-
 def _episode_from_url(url: str | None) -> int | None:
     if not url:
         return None
@@ -92,7 +92,7 @@ def _episode_from_title(title: str) -> int | None:
 
 
 def fetch_feed() -> str:
-    return _get(FEED_URL).text
+    return http_get(FEED_URL).text
 
 
 def parse_feed_items(feed_text: str, retrieved_at: str) -> list[dict]:
@@ -112,7 +112,7 @@ def fetch_archive_pages() -> tuple[list[str], set[int]]:
         if url in seen_urls:
             continue
         seen_urls.add(url)
-        text = _get(url).text
+        text = http_get(url).text
         pages.append(text)
         episode_numbers.update(int(n) for n in ARCHIVE_HREF_RE.findall(text))
         next_match = ARCHIVE_NEXT_RE.search(text)
@@ -215,14 +215,12 @@ def resolve_episode_identity(item: dict) -> tuple[int | None, str, list[str], bo
 def fetch_archive_only_episode(episode: int, local_dir: Path) -> tuple[dict, str]:
     """Fetch a single archive-only episode page. Returns (fields, page_hash)."""
     url = f"https://www.theincomparable.com/robot/{episode}/"
-    text = _get(url).text
+    text = http_get(url).text
     local_dir.mkdir(parents=True, exist_ok=True)
     page_path = local_dir / f"episode_{episode}.html"
     page_path.write_text(text)
 
-    title_match = PAGE_TITLE_RE.search(text)
-    raw_title = title_match.group(1).strip() if title_match else str(episode)
-    title = re.sub(r"\s*-\s*The Incomparable\s*$", "", raw_title).strip()
+    title = page_title(text, str(episode))
 
     audio_match = PAGE_AUDIO_RE.search(text)
     audio_url = audio_match.group(1) if audio_match else ""
@@ -255,16 +253,14 @@ def build_episodes(
     retrieved_at: str,
     local_dir: Path,
     fetch_page=fetch_archive_only_episode,
-) -> tuple[list[Episode], dict[str, str], list[str]]:
+) -> tuple[list[Episode], dict[str, str]]:
     """Reconcile feed items with archive links into Episode records.
 
-    Returns (episodes, episode_page_hashes for archive-only fetches, audio
-    URL conflict notes).
+    Returns (episodes, episode_page_hashes for archive-only fetches).
     """
     episodes: list[Episode] = []
     seen_guids: set[str] = set()
     matched_numbers: set[int] = set()
-    audio_conflicts: list[str] = []
 
     for item in feed_items:
         if item["guid"] and item["guid"] in seen_guids:
@@ -318,38 +314,19 @@ def build_episodes(
             )
         )
 
-    return episodes, episode_page_hashes, audio_conflicts
+    return episodes, episode_page_hashes
 
 
 def apply_exclusions(episodes: list[Episode]) -> None:
-    excluded = json.loads(EXCLUDED_PATH.read_text())["excluded"]
-    by_episode_id = {e["episode_id"]: e["reason"] for e in excluded}
+    by_episode_id = {e["episode_id"]: e["reason"] for e in read_excluded()}
     for ep in episodes:
         if ep.episode_id in by_episode_id:
             ep.excluded = True
             ep.exclusion_reason = by_episode_id[ep.episode_id]
 
 
-def _write_jsonl_atomic(path: Path, episodes: list[Episode]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            for ep in episodes:
-                f.write(ep.model_dump_json() + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def _read_episodes(path: Path) -> list[Episode]:
-    episodes = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            episodes.append(Episode(**json.loads(line)))
-    return episodes
+def read_episodes(path: Path = EPISODES_PATH) -> list[Episode]:
+    return [Episode(**d) for d in read_jsonl(path)]
 
 
 def cross_reference(
@@ -365,38 +342,17 @@ def cross_reference(
     duplicates an existing entry for the same (source_row_id, reason).
     """
     catalog_numbers = {e.episode for e in episodes if e.episode is not None}
+    rulings = list(read_jsonl(scorecard_path)) if scorecard_path.exists() else []
 
-    rulings = []
-    if scorecard_path.exists():
-        for line in scorecard_path.read_text().splitlines():
-            line = line.strip()
-            if line:
-                rulings.append(json.loads(line))
-
-    adjudication_path.parent.mkdir(parents=True, exist_ok=True)
-    if not adjudication_path.exists():
-        adjudication_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "adjudication_version": "0.1",
-                    "note": "manual decisions; append-only",
-                },
-                separators=(",", ":"),
-            )
-            + "\n"
-        )
+    ensure_adjudication_file(adjudication_path)
     existing = read_adjudication_entries(adjudication_path)
     existing_keys = {(e.source_row_id, e.reason) for e in existing}
 
     unmatched_rulings: list[dict] = []
-    matched_263 = None
     new_entries: list[dict] = []
     decided_at = datetime.now(UTC).isoformat()
     for ruling in rulings:
         episode = ruling.get("episode")
-        if episode == 263:
-            matched_263 = episode in catalog_numbers
         if episode is None or episode in catalog_numbers:
             continue
         if ruling.get("review_status") in ("quarantined", "excluded"):
@@ -426,11 +382,7 @@ def cross_reference(
             for entry in new_entries:
                 f.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
-    return {
-        "unmatched_rulings": unmatched_rulings,
-        "new_entries": new_entries,
-        "matched_263": matched_263,
-    }
+    return {"unmatched_rulings": unmatched_rulings, "new_entries": new_entries}
 
 
 def _write_report(
@@ -438,17 +390,15 @@ def _write_report(
     feed_count: int,
     archive_count: int,
     xref: dict,
-    audio_conflicts: list[str],
     out_path: Path,
 ) -> None:
-    both = [e for e in episodes if e.source == "both"]
-    feed_only = [e for e in episodes if e.source == "feed"]
-    archive_only = [e for e in episodes if e.source == "archive"]
+    by_source = Counter(e.source for e in episodes)
 
     numeric = sorted(e.episode for e in episodes if e.episode is not None)
     gaps: list[int] = []
     if numeric:
-        gaps = [n for n in range(numeric[0], numeric[-1] + 1) if n not in set(numeric)]
+        present = set(numeric)
+        gaps = [n for n in range(numeric[0], numeric[-1] + 1) if n not in present]
 
     review_entries = [e for e in episodes if e.review_queue]
 
@@ -464,9 +414,9 @@ def _write_report(
         "## Counts",
         f"- feed items: {feed_count}",
         f"- archive links: {archive_count}",
-        f"- entries in both: {len(both)}",
-        f"- feed-only entries: {len(feed_only)}",
-        f"- archive-only entries: {len(archive_only)}",
+        f"- entries in both: {by_source['both']}",
+        f"- feed-only entries: {by_source['feed']}",
+        f"- archive-only entries: {by_source['archive']}",
         "",
         "## Episode number range",
         f"- range: {numeric[0]}-{numeric[-1]}" if numeric else "- range: (none)",
@@ -483,25 +433,12 @@ def _write_report(
     else:
         lines.append("- none")
 
-    lines += ["", "## Audio URL conflicts"]
-    if audio_conflicts:
-        lines += [f"- {c}" for c in audio_conflicts]
-    else:
-        lines.append(
-            "- none (episode pages are only fetched for archive-only entries, which have "
-            "no feed audio to conflict with)"
-        )
-
     lines += ["", "## Scorecard rows with no matching catalog episode"]
-    if xref["matched_263"] is True:
-        lines.append("- Episode 263: matches catalog episode 263 (exists in the catalog).")
-    elif xref["matched_263"] is False:
-        lines.append("- Episode 263: NO matching catalog episode found.")
     if xref["unmatched_rulings"]:
         for r in xref["unmatched_rulings"]:
             lines.append(f"- {r.get('ruling_ref')}: episode {r.get('episode')} not in catalog")
     else:
-        lines.append("- none (beyond the Episode 263 note above, if any)")
+        lines.append("- none")
 
     lines += ["", "## Excluded episodes"]
     if excluded:
@@ -541,7 +478,7 @@ def run(force: bool = False) -> dict:
     retrieved_at = datetime.now(UTC).isoformat()
     feed_items = parse_feed_items(feed_text, retrieved_at)
 
-    episodes, episode_page_hashes, audio_conflicts = build_episodes(
+    episodes, episode_page_hashes = build_episodes(
         feed_items, archive_episode_numbers, retrieved_at, local_dir
     )
 
@@ -560,18 +497,16 @@ def run(force: bool = False) -> dict:
         and EPISODES_PATH.exists()
         and FINGERPRINT_PATH.read_text().strip() == fp
     ):
-        episodes = _read_episodes(EPISODES_PATH)
+        episodes = read_episodes(EPISODES_PATH)
         reused = True
     else:
         apply_exclusions(episodes)
-        episodes.sort(key=lambda e: (e.episode is None, e.episode or 0, e.episode_label))
-        _write_jsonl_atomic(EPISODES_PATH, episodes)
+        episodes.sort(key=lambda e: episode_sort_key(e.episode, e.episode_label))
+        write_lines_atomic(EPISODES_PATH, (e.model_dump_json() for e in episodes))
         FINGERPRINT_PATH.write_text(fp)
 
     xref = cross_reference(episodes, stamp)
-    _write_report(
-        episodes, len(feed_items), len(archive_episode_numbers), xref, audio_conflicts, REPORT_PATH
-    )
+    _write_report(episodes, len(feed_items), len(archive_episode_numbers), xref, REPORT_PATH)
 
     return {
         "episodes": len(episodes),

@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-transcription-worker = "transcription_worker:main"
+transcription-worker = "transcription_worker.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

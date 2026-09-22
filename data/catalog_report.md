@@ -14,12 +14,8 @@
 ## Review queue
 - none
 
-## Audio URL conflicts
-- none (episode pages are only fetched for archive-only entries, which have no feed audio to conflict with)
-
 ## Scorecard rows with no matching catalog episode
-- Episode 263: matches catalog episode 263 (exists in the catalog).
-- none (beyond the Episode 263 note above, if any)
+- none
 
 ## Excluded episodes
 - episode 0 (theincomparable/robot/0): "0: Origin" is a compilation of rulings that were re-ruled in their own later episodes; a majority of its subjects repeat elsewhere in the scorecard.

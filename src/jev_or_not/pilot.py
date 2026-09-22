@@ -7,30 +7,34 @@ the Phase 1 episode catalog (``data/episodes.jsonl``, built later by
 """
 
 import json
-import os
 import random
-import re
-import tempfile
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 from defusedxml import ElementTree as ET  # hardened parser for network XML (bandit B314)
 
-FEED_URL = "https://feeds.theincomparable.com/robot"
+from jev_or_not.common import (
+    FEED_URL,
+    ITUNES_NS,
+    http_get,
+    page_title,
+    parse_duration,
+    read_excluded,
+    read_jsonl,
+    write_json_atomic,
+    write_lines_atomic,
+)
+
 ARCHIVE_EP0_URL = "https://www.theincomparable.com/robot/0/"
-USER_AGENT = "RobotOrNot-Evaluation/1.0 (+https://github.com/rlorenzo/jev-or-not)"
-ITUNES_NS = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 
 TITLES_PATH = Path("data/episode_titles.jsonl")
 PILOT_PATH = Path("data/gold/pilot_episodes.json")
 SCORECARD_VERIFIED_PATH = Path("data/gold/scorecard_verified.jsonl")
 
 CANDIDATE_EPISODES = [0, 1, 6, 50, 100, 200, 297, 300, 345, 350]
-PINNED_EPISODES = {1, 6}
-EXCLUDED_PATH = Path("data/gold/excluded_episodes.json")
+PINNED_EPISODES = {0, 1, 6, 297}  # must match the pinned list spelled out in RULE_TEXT
 SEED = 42
 RULE_TEXT = (
     "Start from plan candidates [0,1,6,50,100,200,297,300,345,350]; substitute a missing "
@@ -41,66 +45,13 @@ RULE_TEXT = (
 )
 
 
-def _parse_duration(raw: str | None) -> int | None:
-    if not raw:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
-    if ":" in raw:
-        secs = 0
-        for part in raw.split(":"):
-            secs = secs * 60 + int(part)
-        return secs
-    return int(raw)
-
-
-def _write_jsonl_atomic(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            for row in rows:
-                f.write(json.dumps(row, separators=(",", ":")) + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def _write_json_atomic(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2, sort_keys=False)
-            f.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def _read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
-
-
 def fetch_episode_titles() -> dict:
     """Fetch the feed (and episode 0's archive page if missing) and write TITLES_PATH.
 
     Returns a summary dict: rows written, items missing itunes:episode, and
     duplicate episode numbers found (see PLAN.md Phase 1 step 1 anomaly).
     """
-    resp = httpx.get(
-        FEED_URL, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True
-    )
-    resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+    root = ET.fromstring(http_get(FEED_URL).text)
     items = root.findall("./channel/item")
     retrieved_at = datetime.now(UTC).isoformat()
 
@@ -127,7 +78,7 @@ def fetch_episode_titles() -> dict:
         pub_date = (
             parsedate_to_datetime(pubdate_raw).astimezone(UTC).isoformat() if pubdate_raw else None
         )
-        duration_s = _parse_duration(item.findtext(f"{ITUNES_NS}duration"))
+        duration_s = parse_duration(item.findtext(f"{ITUNES_NS}duration"))
         rows.append(
             {
                 "episode_id": episode_id,
@@ -143,18 +94,11 @@ def fetch_episode_titles() -> dict:
     duplicate_episodes = sorted(ep for ep, count in episode_counts.items() if count > 1)
 
     if not any(r["episode"] == 0 for r in rows):
-        archive_resp = httpx.get(
-            ARCHIVE_EP0_URL, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True
-        )
-        archive_resp.raise_for_status()
-        m = re.search(r"<title>(.*?)</title>", archive_resp.text, re.IGNORECASE | re.DOTALL)
-        raw_title = m.group(1).strip() if m else "Episode 0"
-        title0 = re.sub(r"\s*-\s*The Incomparable\s*$", "", raw_title).strip()
         rows.append(
             {
                 "episode_id": "theincomparable/robot/0",
                 "episode": 0,
-                "title": title0,
+                "title": page_title(http_get(ARCHIVE_EP0_URL).text, "Episode 0"),
                 "pub_date": None,
                 "duration_s": None,
                 "retrieved_at": retrieved_at,
@@ -163,7 +107,7 @@ def fetch_episode_titles() -> dict:
         )
 
     rows.sort(key=lambda r: (r["episode"] is None, r["episode"]))
-    _write_jsonl_atomic(TITLES_PATH, rows)
+    write_lines_atomic(TITLES_PATH, (json.dumps(r, separators=(",", ":")) for r in rows))
 
     return {
         "rows": len(rows),
@@ -189,11 +133,10 @@ def select_pilot(
 ) -> dict:
     """Apply the frozen pilot-selection rule (see RULE_TEXT). No I/O, no network."""
     by_episode = {
-        t["episode"]
+        t["episode"]: t
         for t in titles
         if t.get("episode") is not None and t["episode"] not in excluded
     }
-    by_episode = {t["episode"]: t for t in titles if t["episode"] in by_episode}
 
     rulings_by_episode: dict[int, int] = {}
     for r in scorecard_rulings:
@@ -282,9 +225,9 @@ def select_pilot(
 
 def run_selection(seed: int = SEED) -> dict:
     """Read TITLES_PATH + scorecard_verified.jsonl, select the pilot, freeze PILOT_PATH."""
-    titles = _read_jsonl(TITLES_PATH)
-    rulings = _read_jsonl(SCORECARD_VERIFIED_PATH)
-    excluded = frozenset(e["episode"] for e in json.loads(EXCLUDED_PATH.read_text())["excluded"])
+    titles = list(read_jsonl(TITLES_PATH))
+    rulings = list(read_jsonl(SCORECARD_VERIFIED_PATH))
+    excluded = frozenset(e["episode"] for e in read_excluded())
     result = select_pilot(titles, rulings, seed=seed, excluded=excluded)
     result = {
         "pilot_version": result["pilot_version"],
@@ -294,7 +237,7 @@ def run_selection(seed: int = SEED) -> dict:
         "episodes": result["episodes"],
         "total_duration_s": result["total_duration_s"],
     }
-    _write_json_atomic(PILOT_PATH, result)
+    write_json_atomic(PILOT_PATH, result)
     return result
 
 

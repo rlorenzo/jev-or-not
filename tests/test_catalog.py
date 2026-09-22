@@ -60,9 +60,7 @@ def _no_fetch(episode, local_dir):
 
 def test_guid_based_episode_id():
     items = parse_feed_items(FEED_XML, RETRIEVED_AT)
-    episodes, _, _ = build_episodes(
-        items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch
-    )
+    episodes, _ = build_episodes(items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch)
     five = next(e for e in episodes if e.episode == 5)
     assert five.episode_id == "theincomparable/robot/5"
     assert five.source == "both"
@@ -70,9 +68,7 @@ def test_guid_based_episode_id():
 
 def test_itunes_episode_precedence_over_url_and_title():
     items = parse_feed_items(FEED_XML, RETRIEVED_AT)
-    episodes, _, _ = build_episodes(
-        items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch
-    )
+    episodes, _ = build_episodes(items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch)
 
     conflict_url = next(e for e in episodes if e.episode_id == "theincomparable/robot/9")
     assert conflict_url.episode == 9  # itunes:episode wins over URL's /robot/12/
@@ -87,9 +83,7 @@ def test_itunes_episode_precedence_over_url_and_title():
 
 def test_bonus_episode_62b():
     items = parse_feed_items(FEED_XML, RETRIEVED_AT)
-    episodes, _, _ = build_episodes(
-        items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch
-    )
+    episodes, _ = build_episodes(items, {5, 9, 42}, RETRIEVED_AT, Path("."), fetch_page=_no_fetch)
     bonus = next(e for e in episodes if e.episode_id == "theincomparable/robot/62b")
     assert bonus.episode is None
     assert bonus.episode_label == "62b"
@@ -121,7 +115,7 @@ def test_archive_only_entry_fetches_episode_page():
             "fakehash",
         )
 
-    episodes, page_hashes, _ = build_episodes(
+    episodes, page_hashes = build_episodes(
         items, {5, 9, 20, 42}, RETRIEVED_AT, Path("."), fetch_page=fake_fetch
     )
     archive_only = next(e for e in episodes if e.episode == 20)
@@ -219,12 +213,14 @@ def test_cross_reference_flags_unmatched_row_once_and_is_idempotent(tmp_path):
     assert lines_after_second == lines_after_first  # unchanged, no duplicate appended
 
 
-def test_cross_reference_reports_episode_263_match(tmp_path):
-    episodes = [_episode("theincomparable/robot/263", 263)]
+def test_cross_reference_with_no_scorecard_file_is_a_noop(tmp_path):
+    adjudication_path = tmp_path / "adjudication.jsonl"
     result = cross_reference(
-        episodes,
+        [_episode("theincomparable/robot/263", 263)],
         "20260101T000000Z",
         scorecard_path=tmp_path / "does-not-exist.jsonl",
-        adjudication_path=tmp_path / "adjudication.jsonl",
+        adjudication_path=adjudication_path,
     )
-    assert result["matched_263"] is None  # no rulings at all since scorecard path is missing
+    assert result == {"unmatched_rulings": [], "new_entries": []}
+    # the adjudication file is still created, with only its header record
+    assert len(adjudication_path.read_text().splitlines()) == 1

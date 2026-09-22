@@ -25,8 +25,3 @@
 - sc-0-telepresence-robot: episode 0 excluded from the evaluation; see data/gold/excluded_episodes.json
 - sc-0-roomba: episode 0 excluded from the evaluation; see data/gold/excluded_episodes.json
 - sc-0-siri: episode 0 excluded from the evaluation; see data/gold/excluded_episodes.json
-
-## "Episode 263" row(s)
-```json
-{"schema_version":1,"source_row_id":"9eed2915ef9e-1","row_index":49,"item":"Synth (Humans)","episode":263,"episode_link_text":"Episode 263","verdict":"not_robot","verdict_raw":"not:✘","reference_url":"https://en.wikipedia.org/wiki/Humans_(TV_series)","episode_url":"https://www.theincomparable.com/robot/263/","retrieved_at":"2026-09-22T05:43:47.960785+00:00","source_html_hash":"c1cbf470bed625901dfd1c601cf062d8771a720043671fda64217f659399d47a"}
-```

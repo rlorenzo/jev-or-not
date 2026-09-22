@@ -17,7 +17,7 @@ class ScorecardRow(Record):
     item: str
     episode: int | None
     episode_link_text: str
-    verdict: str  # "robot" | "not_robot" | "unresolved"
+    verdict: Literal["robot", "not_robot", "unresolved"]
     verdict_raw: str
     reference_url: str
     episode_url: str
@@ -33,9 +33,9 @@ class ScorecardRuling(Record):
     episode: int | None
     subject: str
     aliases: list[str] = []
-    label: str  # "yes" | "no" | "unresolved"
+    label: Literal["yes", "no", "unresolved"]
     source_row_ids: list[str]
-    review_status: str  # "auto" | "quarantined" | "excluded"
+    review_status: Literal["auto", "quarantined", "excluded"]
     quarantine_reason: str | None = None
     correction_reason: str | None = None
 
@@ -100,7 +100,7 @@ class Episode(Record):
     show_notes_url: str
     audio_url: str
     duration_s: int | None
-    source: str  # "feed" | "archive" | "both"
+    source: Literal["feed", "archive", "both"]
     retrieved_at: str
     aliases: list[str] = []
     excluded: bool = False

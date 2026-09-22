@@ -26,10 +26,13 @@ def cpu_info() -> str:
 
 def ram_gb() -> float:
     # sysctl hw.memsize returns total physical RAM in bytes.
-    out = subprocess.run(  # nosec: fixed argv, no shell
-        ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    return round(int(out) / (1024**3), 1)
+    try:
+        out = subprocess.run(  # nosec: fixed argv, no shell
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        return round(int(out) / (1024**3), 1)
+    except Exception:  # no sysctl / no hw.memsize off macOS: report unknown, don't crash
+        return 0.0
 
 
 def mlx_metal_available() -> str:

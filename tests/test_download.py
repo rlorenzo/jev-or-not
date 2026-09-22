@@ -106,6 +106,65 @@ def test_resume_from_partial_via_range(_mock_duration, conn, tmp_path):
     assert (tmp_path / "999.mp3").read_bytes() == full
 
 
+def test_html_body_on_resume_is_failure(conn, tmp_path):
+    """A range request answered with an error page must not append HTML to the audio."""
+    (tmp_path / "999.mp3").write_bytes(b"FAKEMP3DATA" * 10)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "range" in request.headers
+        return httpx.Response(
+            206, headers={"Content-Type": "text/html"}, content=b"<html>error page</html>"
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "html_body"
+    assert not (tmp_path / "999.mp3").exists()
+
+
+@patch("jev_or_not.download.measure_duration_s", return_value=None)
+def test_416_with_complete_file_is_trusted(_mock_duration, conn, tmp_path):
+    full = b"FAKEMP3DATA" * 100
+    (tmp_path / "999.mp3").write_bytes(full)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers.get("range"))
+        return httpx.Response(416, headers={"Content-Range": f"bytes */{len(full)}"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "success"
+    assert calls == [f"bytes={len(full)}-"]  # no re-fetch: the server confirmed the size
+    assert (tmp_path / "999.mp3").read_bytes() == full
+
+
+@patch("jev_or_not.download.measure_duration_s", return_value=None)
+def test_416_with_size_mismatch_restarts_clean(_mock_duration, conn, tmp_path):
+    full = b"FAKEMP3DATA" * 100
+    (tmp_path / "999.mp3").write_bytes(b"STALE" * 200)  # oversized/stale partial
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers.get("range"))
+        if "range" in request.headers:
+            return httpx.Response(416, headers={"Content-Range": f"bytes */{len(full)}"})
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"}, content=full)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "success"
+    assert calls == ["bytes=1000-", None]  # ranged 416, then a clean un-ranged GET
+    assert (tmp_path / "999.mp3").read_bytes() == full
+
+
 @patch("jev_or_not.download.measure_duration_s", return_value=123.0)
 def test_second_run_skips_via_ledger(_mock_duration, conn, tmp_path):
     calls = []

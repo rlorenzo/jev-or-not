@@ -15,12 +15,10 @@ successful download also writes a small JSON sidecar next to the audio file;
 """
 
 import json
-import os
 import random
 import re
 import sqlite3
 import subprocess  # nosec B404 - only used below for the fixed afinfo call
-import tempfile
 import time
 import uuid
 from datetime import UTC, datetime
@@ -28,11 +26,12 @@ from pathlib import Path
 
 import httpx
 
-from jev_or_not.catalog import EPISODES_PATH
+from jev_or_not.catalog import read_episodes
+from jev_or_not.common import USER_AGENT, episode_sort_key, write_lines_atomic
 from jev_or_not.fingerprint import file_hash, fingerprint
 from jev_or_not.ledger import claim, complete, ensure_task, fail, open_ledger, successes
 from jev_or_not.models import AudioManifestEntry, Episode
-from jev_or_not.pilot import PILOT_PATH, USER_AGENT
+from jev_or_not.pilot import PILOT_PATH
 
 CODE_VERSION = "download-v1"
 SCHEMA_VERSION = 1
@@ -88,22 +87,29 @@ def _fetch_to_file(client: httpx.Client, url: str, path: Path) -> tuple[str, str
     mode = "ab" if existing else "wb"
 
     with client.stream("GET", url, headers=headers) as resp:
-        if resp.status_code == 416:
-            # Server says our existing bytes already cover the full range:
-            # treat the file on disk as complete (ponytail: trusts a prior
-            # partial download rather than re-verifying with a fresh GET).
-            return str(resp.url), resp.headers.get("content-type", "")
+        if resp.status_code == 416 and existing:
+            # Range not satisfiable. Only trust the bytes on disk when the
+            # server's "Content-Range: bytes */<total>" says they are the whole
+            # file; otherwise the partial file is stale or oversized, so drop it
+            # and fetch cleanly (that retry can't 416 again: it sends no Range).
+            total = resp.headers.get("content-range", "").rpartition("/")[2].strip()
+            if total.isdigit() and int(total) == existing:
+                return str(resp.url), resp.headers.get("content-type", "")
+            path.unlink(missing_ok=True)
+            return _fetch_to_file(client, url, path)
         if existing and resp.status_code == 200:
             mode = "wb"  # server ignored our Range header; restart clean
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
+        # An HTML content-type is decisive on any response, including a resumed
+        # one, where appending the body would silently corrupt the audio file.
+        if content_type.split(";")[0].strip().lower() == "text/html":
+            raise HTMLBodyError(f"HTML body returned for {url} (content-type={content_type!r})")
         checked_html = mode != "wb"  # only the first bytes of a fresh file are meaningful
         with open(path, mode) as f:
             for chunk in resp.iter_bytes():
                 if not checked_html:
-                    probe = chunk.lstrip()[:20]
-                    is_html_type = content_type.split(";")[0].strip().lower() == "text/html"
-                    if is_html_type or probe.startswith(b"<"):
+                    if chunk.lstrip()[:20].startswith(b"<"):
                         raise HTMLBodyError(
                             f"HTML body returned for {url} (content-type={content_type!r})"
                         )
@@ -208,19 +214,6 @@ def download_one(
     return {"status": "success", **meta}
 
 
-def _write_jsonl_atomic(path: Path, rows: list[AudioManifestEntry]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            for row in rows:
-                f.write(row.model_dump_json() + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 def export_manifest(conn: sqlite3.Connection, episodes: list[Episode]) -> list[AudioManifestEntry]:
     """Export the newest successful download per episode, sorted by episode number."""
     ep_by_id = {e.episode_id: e for e in episodes}
@@ -235,25 +228,12 @@ def export_manifest(conn: sqlite3.Connection, episodes: list[Episode]) -> list[A
 
     def sort_key(meta: dict) -> tuple:
         ep = ep_by_id.get(meta["episode_id"])
-        return (
-            ep is None or ep.episode is None,
-            (ep.episode if ep else None) or 0,
-            meta["episode_label"],
-        )
+        return episode_sort_key(ep.episode if ep else None, meta["episode_label"])
 
     metas = sorted((m for _, m in latest.values()), key=sort_key)
     rows = [AudioManifestEntry(**m) for m in metas]
-    _write_jsonl_atomic(MANIFEST_PATH, rows)
+    write_lines_atomic(MANIFEST_PATH, (r.model_dump_json() for r in rows))
     return rows
-
-
-def _load_episodes(path: Path = EPISODES_PATH) -> list[Episode]:
-    episodes = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            episodes.append(Episode(**json.loads(line)))
-    return episodes
 
 
 def _select_episodes(episodes: list[Episode], pilot_only: bool) -> list[Episode]:
@@ -262,7 +242,7 @@ def _select_episodes(episodes: list[Episode], pilot_only: bool) -> list[Episode]
     pilot_ids = {pe["episode_id"] for pe in json.loads(PILOT_PATH.read_text())["episodes"]}
 
     def sort_key(e: Episode) -> tuple:
-        return (e.episode is None, e.episode or 0, e.episode_label)
+        return episode_sort_key(e.episode, e.episode_label)
 
     if pilot_only:
         selected = [e for e in candidates if e.episode_id in pilot_ids]
@@ -274,7 +254,7 @@ def _select_episodes(episodes: list[Episode], pilot_only: bool) -> list[Episode]
 
 
 def run(pilot_only: bool = False, force: bool = False) -> dict:
-    episodes = _load_episodes()
+    episodes = read_episodes()
     selected = _select_episodes(episodes, pilot_only)
 
     conn = open_ledger()

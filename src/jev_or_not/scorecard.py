@@ -7,25 +7,23 @@ single ``<ul class="list">`` of ``<li>`` rows, each with a reference link, an
 
 import hashlib
 import json
-import os
 import re
-import tempfile
+from collections import Counter
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-import httpx
-
+from jev_or_not.common import http_get, read_jsonl, write_lines_atomic
 from jev_or_not.fingerprint import file_hash, fingerprint
 from jev_or_not.models import AdjudicationEntry, ScorecardRow, ScorecardRuling
 
 SCORECARD_URL = "https://robotornot.info/"
-USER_AGENT = "RobotOrNot-Evaluation/1.0 (+https://github.com/rlorenzo/jev-or-not)"
 CODE_VERSION = "scorecard-v1"
 LOCAL_DIR = Path("local/scorecard")
 GOLD_DIR = Path("data/gold")
 SCHEMA_VERSION = 1
 EP_HREF_RE = re.compile(r"/robot/(\d+)/?")
+VERDICT_BY_CLASS = {"robot": "robot", "not": "not_robot"}  # any other class is unresolved
 LABEL_MAP = {"robot": "yes", "not_robot": "no", "unresolved": "unresolved"}
 ANOMALY_THRESHOLD = 50
 ADJUDICABLE_FIELDS = {"episode", "episode_id", "subject", "aliases", "label", "review_status"}
@@ -96,11 +94,7 @@ class _ScorecardParser(HTMLParser):
 
 
 def _map_verdict(verdict_class: str) -> str:
-    if verdict_class == "robot":
-        return "robot"
-    if verdict_class == "not":
-        return "not_robot"
-    return "unresolved"
+    return VERDICT_BY_CLASS.get(verdict_class, "unresolved")
 
 
 def _slug(text: str) -> str:
@@ -108,11 +102,7 @@ def _slug(text: str) -> str:
 
 
 def fetch_html() -> str:
-    resp = httpx.get(
-        SCORECARD_URL, headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True
-    )
-    resp.raise_for_status()
-    return resp.text
+    return http_get(SCORECARD_URL).text
 
 
 def parse_rows(html: str, retrieved_at: str, source_html_hash: str) -> list[ScorecardRow]:
@@ -225,8 +215,8 @@ def build_rulings(rows: list[ScorecardRow]) -> list[ScorecardRuling]:
     return rulings
 
 
-def ensure_adjudication_file() -> Path:
-    path = GOLD_DIR / "adjudication.jsonl"
+def ensure_adjudication_file(path: Path | None = None) -> Path:
+    path = path or GOLD_DIR / "adjudication.jsonl"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         header = {
@@ -239,13 +229,8 @@ def ensure_adjudication_file() -> Path:
 
 
 def read_adjudication_entries(path: Path) -> list[AdjudicationEntry]:
-    lines = path.read_text().splitlines()
-    entries = []
-    for line in lines[1:]:  # first line is the header record, not a decision
-        line = line.strip()
-        if line:
-            entries.append(AdjudicationEntry(**json.loads(line)))
-    return entries
+    # the first record is the file header, not a decision
+    return [AdjudicationEntry(**d) for d in list(read_jsonl(path))[1:]]
 
 
 def apply_adjudication(
@@ -262,27 +247,15 @@ def apply_adjudication(
             if entry.field in ADJUDICABLE_FIELDS:
                 setattr(ruling, entry.field, entry.new)
                 ruling.correction_reason = entry.reason
+                if entry.field == "review_status" and entry.new == "quarantined":
+                    # the report prints quarantine_reason; without this it prints None
+                    ruling.quarantine_reason = entry.reason
     return rulings
-
-
-def _write_jsonl_atomic(path: Path, records: list[ScorecardRow] | list[ScorecardRuling]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            for record in records:
-                f.write(record.model_dump_json() + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
 
 
 def _write_report(rows: list[ScorecardRow], rulings: list[ScorecardRuling], out_path: Path) -> None:
     distinct_episodes = {r.episode for r in rows if r.episode is not None}
-    label_counts: dict[str, int] = {}
-    for ruling in rulings:
-        label_counts[ruling.label] = label_counts.get(ruling.label, 0) + 1
+    label_counts = dict(Counter(r.label for r in rulings))
 
     subject_episodes: dict[str, dict[int | None, str]] = {}
     for ruling in rulings:
@@ -292,7 +265,6 @@ def _write_report(rows: list[ScorecardRow], rulings: list[ScorecardRuling], out_
     duplicated = {s: eps for s, eps in subject_episodes.items() if len(eps) > 1}
 
     quarantined = [r for r in rulings if r.review_status == "quarantined"]
-    ep263_rows = [r for r in rows if "263" in r.episode_link_text]
 
     lines = [
         "# Scorecard report",
@@ -328,12 +300,6 @@ def _write_report(rows: list[ScorecardRow], rulings: list[ScorecardRuling], out_
     excluded = [r for r in rulings if r.review_status == "excluded"]
     lines += ["", "## Excluded rulings (adjudicated)"]
     lines += [f"- {r.ruling_ref}: {r.correction_reason}" for r in excluded] or ["- none"]
-    lines += ["", '## "Episode 263" row(s)']
-    if ep263_rows:
-        for row in ep263_rows:
-            lines.append(f"```json\n{row.model_dump_json()}\n```")
-    else:
-        lines.append("- none found")
 
     out_path.write_text("\n".join(lines) + "\n")
 
@@ -350,7 +316,7 @@ def run(force: bool = False) -> dict:
     retrieved_at = datetime.now(UTC).isoformat()
 
     rows = parse_rows(html, retrieved_at, source_html_hash)
-    _write_jsonl_atomic(GOLD_DIR / "scorecard.jsonl", rows)
+    write_lines_atomic(GOLD_DIR / "scorecard.jsonl", (r.model_dump_json() for r in rows))
 
     adjudication_path = ensure_adjudication_file()
     fp = fingerprint(
@@ -378,7 +344,7 @@ def run(force: bool = False) -> dict:
 
     rulings = build_rulings(rows)
     rulings = apply_adjudication(rulings, entries)
-    _write_jsonl_atomic(verified_path, rulings)
+    write_lines_atomic(verified_path, (r.model_dump_json() for r in rulings))
     fp_path.write_text(fp)
     _write_report(rows, rulings, GOLD_DIR / "scorecard_report.md")
 
