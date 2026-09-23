@@ -1,17 +1,52 @@
 # Pilot reference annotation procedure
 
 Defines how `data/gold/pilot_reference.jsonl` gets built (PLAN.md Phase 0 step 4,
-executed in Phase 1 step 6 once pilot audio exists). This is a **definition
-only** — no annotation runs yet.
+executed in Phase 1 step 6 once pilot audio exists). Built with the pooled
+review below.
 
 ## Who and unit of annotation
 
-Rex annotates by listening to each pilot episode directly (not from a
-transcript, to avoid transcription errors biasing the reference). The unit is
-**every distinct ruling in the episode** — every time John states a yes/no
-(or unresolved) verdict on whether something is a robot, including
+The unit is **every distinct ruling in the episode**: every time John states a
+yes/no (or unresolved) verdict on whether something is a robot, including
 non-robot subjects the show digresses into (e.g. "Is a raft a boat?"). One
-episode typically yields multiple `PilotReference` rows.
+episode typically yields several `PilotReference` rows.
+
+## Pooled review (method, from 2026-09-23)
+
+Listening to every episode end to end and timing each ruling proved too
+costly, so Rex builds the reference by **reviewing pooled findings** in
+`uv run jev-or-not annotate`. This is the TREC-style pooling used when full
+annotation is too expensive.
+
+1. **Pool.** For each episode, every extraction run's rulings (candidates A,
+   A2 and B × sonnet and haiku, from `data/verdicts.jsonl`) and the episode's
+   scorecard subjects are merged into one list of findings, deduplicated by
+   subject (`src/jev_or_not/review_pool.py`). The reviewer never sees which
+   model or run found a finding; the tool shows only how many runs found it
+   and whether the scorecard lists it.
+2. **Review.** For each finding, Rex plays its span (the median of each run's
+   latest evidence quote, ±2 s) and then chooses one of:
+   - **approve**: enter it as proposed, speaker JOHN;
+   - **fix**: correct the span, verdict, strength, subject or speaker, then
+     enter it;
+   - **reject**: not a ruling, a duplicate, or wrong.
+
+   Scorecard-only findings have no span or proposed verdict and can only be
+   fixed or rejected.
+3. **Add.** Rex adds any ruling no source found (marked with `[` `]`), using
+   the B transcript to skim for them.
+4. **Close.** A session closes only when no finding is pending.
+
+Every decision is logged to `data/gold/pilot_review.jsonl` (approved, fixed,
+rejected or added, with the finding's run count and scorecard flag). That log
+is the provenance of the pooled reference.
+
+**What this costs.** The reference is no longer independent of the
+extractors. Recall can only be measured against rulings that some run or the
+scorecard found, plus the ones Rex added. The scoring report must say the
+reference is pooled and report precision and recall with that caveat. An
+approved finding also anchors Rex toward the proposed verdict, so he should
+listen to its span before approving.
 
 ## Timestamps
 
@@ -61,9 +96,9 @@ without bumping its version.
 ## Distinct from scorecard labels
 
 `data/gold/scorecard_verified.jsonl` is a separate, independently-sourced
-reference (fan-scraped, robot-subjects-only). Never copy a scorecard verdict
-into a `PilotReference` row, and never let the scorecard influence the
-annotation while listening. If a pilot annotation disagrees with the
+reference (fan-scraped, robot-subjects-only). Its *subjects* join the review
+pool so that rulings no run found still get reviewed, but its *verdicts* are
+never shown during review and are never copied into a `PilotReference` row. If a pilot annotation disagrees with the
 scorecard for the same (episode, subject), record the disagreement as an
 entry in the adjudication file — do not silently reconcile them into one
 label.

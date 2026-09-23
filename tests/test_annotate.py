@@ -1,5 +1,6 @@
 """Tests for jev_or_not.annotate: docket rules, not the HTTP layer."""
 
+import dataclasses
 import json
 import subprocess
 import threading
@@ -11,7 +12,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from jev_or_not import annotate
+from jev_or_not import annotate, review_pool
 from jev_or_not.annotate import Desk, DeskError
 from jev_or_not.models import PilotReference
 
@@ -60,7 +61,16 @@ def desk(tmp_path: Path) -> Desk:
         manifest_path=tmp_path / "audio_manifest.jsonl",
         state_path=tmp_path / "local" / "state.json",
         peaks_dir=tmp_path / "local" / "peaks",
+        review_path=gold / "pilot_review.jsonl",
     )
+
+
+def test_fixture_paths_all_stay_in_tmp(desk, tmp_path):
+    # A Desk path left at its default writes the real data/ or local/ tree.
+    for f in dataclasses.fields(desk):
+        value = getattr(desk, f.name)
+        if isinstance(value, Path):
+            assert value.is_relative_to(tmp_path), f.name
 
 
 def _entry(**overrides) -> dict:
@@ -77,7 +87,16 @@ def _entry(**overrides) -> dict:
     return entry
 
 
+def _clear_findings(desk: Desk, number: int) -> None:
+    """Reject every pending pooled finding so the session can close."""
+    ep = next(e for e in desk.pilot() if e["episode"] == number)
+    for c in desk.candidates(ep):
+        if not c["decision"]:
+            desk.review(number, {"candidate_id": c["candidate_id"], "action": "reject"})
+
+
 def _close_all(desk: Desk) -> None:
+    _clear_findings(desk, 1)
     desk.close_session(1)
     desk.close_session(2, no_rulings=True)
 
@@ -177,7 +196,7 @@ def test_no_ruling_drops_strength(desk):
     assert saved["verdict_strength"] is None
 
 
-def test_transcript_is_withheld_until_the_session_closes(desk, tmp_path):
+def test_transcript_is_available_during_pooled_review(desk, tmp_path):
     enrolled = tmp_path / "1-B.json"
     enrolled.write_text(
         json.dumps(
@@ -200,10 +219,6 @@ def test_transcript_is_withheld_until_the_session_closes(desk, tmp_path):
         )
         + "\n"
     )
-    desk.save_entry(1, _entry())
-    assert desk.session(1)["transcript"] is None
-
-    desk.close_session(1)
     assert desk.session(1)["transcript"] == [
         {"start": 0.0, "end": 2.0, "speaker": "JOHN", "text": "Hi"}
     ]
@@ -218,6 +233,7 @@ def test_closing_an_empty_session_needs_confirmation(desk):
 
 def test_closed_session_refuses_edits_until_reopened(desk):
     desk.save_entry(1, _entry())
+    _clear_findings(desk, 1)
     desk.close_session(1)
     with pytest.raises(DeskError, match="closed"):
         desk.save_entry(1, _entry(subject="Other"))
@@ -227,6 +243,7 @@ def test_closed_session_refuses_edits_until_reopened(desk):
 
 def test_seal_requires_every_session_closed(desk):
     desk.save_entry(1, _entry())
+    _clear_findings(desk, 1)
     desk.close_session(1)
     with pytest.raises(DeskError, match=r"still open: \[2\]"):
         desk.seal_record()
@@ -343,6 +360,15 @@ def test_http_routes_and_refusals(desk):
 
         saved = post("/api/sessions/1/entries", _entry())
         assert saved["ruling_id"] == f"{EP1}#1"
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            post("/api/sessions/1/close", {})
+        assert exc.value.code == 409  # the scorecard finding is still pending
+        (finding,) = json.loads(opener.open(f"http://127.0.0.1:{port}/api/sessions/1").read())[
+            "candidates"
+        ]
+        post(
+            "/api/sessions/1/review", {"candidate_id": finding["candidate_id"], "action": "reject"}
+        )
         assert post("/api/sessions/1/close", {}) == {"ok": True}
         with pytest.raises(urllib.error.HTTPError) as exc:
             post("/api/sessions/1/entries", _entry())
@@ -357,3 +383,137 @@ def test_http_routes_and_refusals(desk):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def _verdict(subject: str, verdict: str, start: float, run: str, **kw) -> dict:
+    return {
+        "episode_id": EP1,
+        "subject": subject,
+        "category": "robot",
+        "verdict": verdict,
+        "verdict_strength": None if verdict == "no_ruling" else "firm",
+        "evidence_quotes": [{"quote": "q " + subject, "start_s": start, "end_s": start + 6}],
+        "extractor_confidence": 0.9,
+        "run": run,
+        **kw,
+    }
+
+
+def test_pool_merges_phrasings_and_hides_runs():
+    verdicts = [
+        _verdict("Mr. Roboto", "no", 280, "A|s"),
+        _verdict("the Mr. Roboto character", "no", 282, "B|s"),
+        _verdict("microscopic dust-sized robots", "no", 100, "A|s"),
+        _verdict("the microscopic machines", "yes", 104, "B|h"),
+        _verdict("Kilroy", "no_ruling", 200, "B|h"),
+    ]
+    scorecard = [{"subject": "Mr. Roboto", "label": "no"}, {"subject": "Auto-pilot", "label": "no"}]
+    cands = review_pool.pool(EP1, 311, verdicts, scorecard, runs_total=6)
+
+    # audio order; the shortest of the most common phrasings names each group
+    assert [c["subject"] for c in cands] == [
+        "the microscopic machines",
+        "Kilroy",
+        "Mr. Roboto",
+        "Auto-pilot",  # scorecard-only, no span: last
+    ]
+    by_subject = {c["subject"]: c for c in cands}
+    roboto = by_subject["Mr. Roboto"]
+    assert roboto["found_by"] == 2 and roboto["on_scorecard"] and roboto["runs_total"] == 6
+    assert roboto["span"][0] == 281.0  # median of the members' quote starts
+    assert "run" not in roboto and "A|s" not in json.dumps(cands)  # blind to who found it
+    micro = next(c for c in cands if "microscopic" in c["subject"])
+    assert micro["verdict_split"] == {"no": 1, "yes": 1}
+    auto = by_subject["Auto-pilot"]
+    assert auto["span"] is None and auto["verdict"] is None and auto["found_by"] == 0
+    assert cands[-1] is auto
+    assert len(cands) == 4
+
+
+def test_pool_span_near_the_end_of_the_audio_stays_valid():
+    (cand,) = review_pool.pool(EP1, 311, [_verdict("Kilroy", "no", 310, "A|s")], [], 6)
+    assert cand["span"] == [307.0, 311.0]  # start pulled back, not an empty span
+
+
+def _seed_verdicts(desk: Desk) -> None:
+    desk.enrolled_index_path.write_text(
+        json.dumps(
+            {
+                "episode_id": EP1,
+                "episode_label": "1",
+                "candidate": "B",
+                "enrolled_hash": "h1",
+                "enrolled_path": "missing.json",
+            }
+        )
+        + "\n"
+    )
+    row = {
+        **_verdict("Mr. Roboto", "no", 290, "x"),
+        "transcript_hash": "h1",
+        "extractor_model": "claude-haiku-subagent",
+    }
+    del row["run"]
+    desk.verdicts_path.write_text(json.dumps(row) + "\n")
+
+
+def test_review_approve_reject_undo_and_close(desk):
+    _seed_verdicts(desk)
+    (roboto,) = desk.session(1)["candidates"]  # extraction and scorecard merged
+    assert roboto["found_by"] == 1 and roboto["on_scorecard"]
+
+    with pytest.raises(DeskError, match="still to review"):
+        desk.close_session(1)
+
+    approved = desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "approve"})
+    assert approved["ruling_id"] == f"{EP1}#1"
+    assert (approved["verdict"], approved["speaker"]) == ("no", "JOHN")
+    assert (approved["ruling_start_s"], approved["ruling_end_s"]) == (290.0, 296.0)
+    with pytest.raises(DeskError, match="undo it first"):
+        desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "reject"})
+
+    desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "undo"})
+    assert desk.rows() == []
+    fixed = desk.review(
+        1, {"candidate_id": roboto["candidate_id"], "action": "fix", **_entry(verdict="yes")}
+    )
+    assert fixed["ruling_id"] == f"{EP1}#2"  # #1 is retired
+    assert fixed["decision"] == "fixed" and fixed["verdict"] == "yes"
+
+    desk.save_entry(1, _entry(subject="Kilroy", ruling_start_s=10, ruling_end_s=14))
+    log = [json.loads(line) for line in desk.review_path.read_text().splitlines()]
+    assert [r["decision"] for r in log] == ["fixed", "added"]
+    assert log[0]["found_by"] == 1 and log[0]["on_scorecard"] is True
+    assert log[1]["subject"] == "Kilroy" and log[1]["candidate_id"] is None
+    desk.close_session(1)
+
+
+def test_scorecard_only_finding_cannot_be_approved_blind(desk):
+    (only,) = desk.session(1)["candidates"]
+    assert only["span"] is None
+    with pytest.raises(DeskError, match="fix it"):
+        desk.review(1, {"candidate_id": only["candidate_id"], "action": "approve"})
+
+
+def test_deleting_an_approved_entry_returns_its_finding_to_pending(desk):
+    _seed_verdicts(desk)
+    (roboto,) = desk.session(1)["candidates"]
+    approved = desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "approve"})
+    desk.delete_entry(1, approved["ruling_id"])
+    assert desk.session(1)["pending"] == 1
+
+
+def test_rejecting_then_undoing_returns_a_finding_to_pending(desk):
+    _seed_verdicts(desk)
+    (roboto,) = desk.session(1)["candidates"]
+    assert desk.overview()["sessions"][0]["pending"] == 1
+
+    desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "reject", "reason": "dup"})
+    assert desk.overview()["sessions"][0]["pending"] == 0
+    (logged,) = [json.loads(line) for line in desk.review_path.read_text().splitlines()]
+    assert (logged["decision"], logged["ruling_id"], logged["reason"]) == ("rejected", None, "dup")
+
+    desk.review(1, {"candidate_id": roboto["candidate_id"], "action": "undo"})
+    assert desk.review_path.read_text() == ""
+    assert desk.session(1)["pending"] == 1
+    assert desk.rows() == []

@@ -293,7 +293,37 @@ main { min-width: 0; display: flex; flex-direction: column; }
 .session-foot { display: flex; align-items: center; gap: 14px; margin-top: 28px; flex-wrap: wrap; }
 .session-foot p { margin: 0; color: var(--muted); font-size: 13px; }
 
-/* ---------- locked + clerk ---------- */
+/* ---------- pooled findings ---------- */
+.section-head { display: flex; align-items: baseline; gap: 12px; margin: 26px 0 2px; }
+.section-head h2 { margin: 0; font-size: 15px; font-weight: 800; }
+.section-head p { margin: 0; font-size: 13px; color: var(--muted); }
+.line.finding { grid-template-columns: 58px 150px minmax(0, 1fr) 210px; align-items: start; cursor: pointer; }
+.line.finding.active { box-shadow: inset 0 2px 0 var(--ink), inset 0 -1px 0 var(--ink); }
+.play-span {
+  width: 40px; height: 40px; display: grid; place-items: center;
+  border: 1.5px solid var(--ink); background: none; color: var(--ink); cursor: pointer;
+}
+.play-span:hover { background: var(--ink); color: var(--paper); }
+.play-span svg { width: 13px; height: 13px; }
+.found { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.found b { color: var(--ink-2); font-weight: 700; }
+.quotes { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.quotes button {
+  background: none; border: 0; padding: 0; text-align: left; cursor: pointer;
+  font-size: 14px; font-style: italic; color: var(--ink-2); line-height: 1.4;
+}
+.quotes button:hover { color: var(--ink); }
+.quotes .at { font-style: normal; font-size: 12px; color: var(--muted); margin-right: 6px; }
+.finding-actions { grid-column: 2 / -1; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+.btn.small { padding: 6px 12px; font-size: 13px; }
+.aside-list { list-style: none; margin: 0; padding: 0; }
+.aside-list li { display: flex; gap: 14px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 14px; color: var(--muted); }
+.aside-list .what { text-decoration: line-through; text-decoration-color: var(--rule-strong); color: var(--ink-2); }
+.aside-list button { margin-left: auto; }
+.queue-done { padding: 18px 0 6px; color: var(--ink-2); font-size: 14px; }
+.queue-done b { color: var(--green); }
+
+/* ---------- locked + transcript ---------- */
 .locked { padding: 44px 0; max-width: 60ch; }
 .locked h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 20px; }
 .locked h2 svg { width: 18px; height: 18px; color: var(--muted); }
@@ -345,6 +375,7 @@ main { min-width: 0; display: flex; flex-direction: column; }
 @media (max-width: 1100px) {
   .line { grid-template-columns: 48px 128px minmax(0, 1fr) 170px; gap: 14px; }
   .line.writing { grid-template-columns: 48px 170px minmax(0, 1fr) 150px; }
+  .line.finding { grid-template-columns: 48px 128px minmax(0, 1fr) 170px; }
   .writing .fields { grid-template-columns: 1fr; }
   .sc-row { grid-template-columns: 1fr; }
 }
@@ -361,7 +392,8 @@ main { min-width: 0; display: flex; flex-direction: column; }
   .tab { white-space: nowrap; }
   .sessions a { min-width: 220px; }
   .s-title { white-space: normal; }
-  .line.writing { grid-template-columns: 44px 1fr; }
+  .line.writing, .line.finding { grid-template-columns: 44px 1fr; }
+  .line.finding .l-body, .line.finding .l-stamp, .finding-actions { grid-column: 1 / -1; }
   .line.writing .spans, .line.writing .fields, .writing-foot, .writing .l-stamp { grid-column: 1 / -1; }
   .line { grid-template-columns: 44px 1fr; }
   .l-span { grid-column: 2; }
@@ -404,7 +436,7 @@ const S = {
   overview: null, n: null, session: null, peaks: null, peaksError: null,
   draft: null, draftError: null, tab: "entries", activeId: null,
   loop: false, pressId: null, scorecard: null, extractions: null,
-  confirm: null, lastResumePost: 0,
+  confirm: null, lastResumePost: 0, sel: 0, stopAt: null,
 };
 
 const VERDICTS = [
@@ -524,7 +556,7 @@ function renderRail() {
       <span class="s-no">No.&nbsp;${s.episode}</span>
       <span class="s-title">${esc(shortTitle(s.title))}</span>
       <span class="s-mark ${s.status}" title="${s.status}">${ICON[s.status]}</span>
-      <span class="s-meta">${tc(s.duration_s, false)} · ${s.entries} ${s.entries === 1 ? "entry" : "entries"}${s.audio_available ? "" : " · no audio"}</span>
+      <span class="s-meta">${tc(s.duration_s, false)} · ${s.pending ? `${s.pending} to review` : `${s.entries} ${s.entries === 1 ? "entry" : "entries"}`}${s.audio_available ? "" : " · no audio"}</span>
     </a></li>`).join("");
   const foot = $("#rail-foot");
   if (o.sealed) {
@@ -548,7 +580,7 @@ function renderNext() {
   }
   const next = o.sessions.find(s => s.status === "open");
   if (!next) {
-    el.innerHTML = `<span class="dot"></span><span><strong>All sessions closed.</strong> Review any clerk's checks, then seal the record.</span>`;
+    el.innerHTML = `<span class="dot"></span><span><strong>All sessions closed.</strong> Seal the record when you’re ready.</span>`;
     return;
   }
   const here = next.episode === S.n;
@@ -566,7 +598,8 @@ function renderView() {
       <p class="meta">
         <span>Session <b>No. ${s.episode}</b></span>
         <span>${tc(s.duration_s, false)} of audio</span>
-        <span><b>${entries.length}</b> ${entries.length === 1 ? "entry" : "entries"}</span>
+        <span><b>${s.pending}</b> to review</span>
+        <span><b>${entries.length}</b> on the record</span>
         <span class="status-word ${s.status}">${s.status}</span>
       </p>
     </header>
@@ -591,6 +624,11 @@ function renderView() {
         ${s.audio_available ? "" : `<div class="strip-msg">No audio for this episode. Run <kbd>jev-or-not download</kbd>.</div>`}
       </div>
       <div class="keys" aria-label="Keyboard">
+        <span><kbd>↑</kbd><kbd>↓</kbd> finding</span>
+        <span><kbd>P</kbd> play its span</span>
+        <span><kbd>Enter</kbd> approve</span>
+        <span><kbd>E</kbd> fix</span>
+        <span><kbd>X</kbd> reject</span>
         <span><kbd>Space</kbd> play</span>
         <span><kbd>←</kbd><kbd>→</kbd> 5 s, <kbd>⇧</kbd> 1 s</span>
         <span><kbd>[</kbd><kbd>]</kbd> mark start / end</span>
@@ -598,14 +636,14 @@ function renderView() {
         <span><kbd>F</kbd><kbd>H</kbd><kbd>R</kbd> strength</span>
         <span><kbd>J</kbd><kbd>S</kbd><kbd>G</kbd> speaker</span>
         <span><kbd>T</kbd> type subject</span>
-        <span><kbd>Enter</kbd> enter it</span>
+        <span><kbd>Enter</kbd> enter a fix</span>
         <span><kbd>L</kbd> loop</span>
         <span><kbd>Esc</kbd> cancel</span>
       </div>
     </section>
     <div class="tabs" role="tablist">
-      ${tab("entries", `Entries <span class="count">${entries.length}</span>`, false)}
-      ${tab("clerk", "Clerk’s check", !s.transcript)}
+      ${tab("entries", `Review <span class="count">${s.pending ? s.pending + " left" : "done"}</span>`, false)}
+      ${tab("transcript", "Transcript", !s.transcript)}
       ${tab("scorecard", "Scorecard", !sealed())}
       ${tab("extractions", "Extractions", !sealed())}
     </div>
@@ -621,7 +659,7 @@ function renderPanel(stampFlash = false) {
   const p = $("#panel");
   if (!p) return;
   if (S.tab === "entries") p.innerHTML = entriesHtml(stampFlash);
-  else if (S.tab === "clerk") p.innerHTML = clerkHtml();
+  else if (S.tab === "transcript") p.innerHTML = transcriptHtml();
   else if (S.tab === "scorecard") p.innerHTML = scorecardHtml();
   else p.innerHTML = extractionsHtml();
   const f = p.querySelector("[data-autofocus]");
@@ -629,19 +667,53 @@ function renderPanel(stampFlash = false) {
   highlightTranscript();
 }
 
+function pendingFindings() { return S.session.candidates.filter(c => !c.decision); }
 function entriesHtml(stampFlash) {
   const s = S.session;
-  const lines = (S.draft && S.draft.mode === "new" ? draftHtml(stampFlash) : "") +
-    s.entries.map(e => (S.draft && S.draft.mode !== "new" && S.draft.ruling_id === e.ruling_id) ? draftHtml(stampFlash) + (S.draft.mode === "supersede" ? lineHtml(e) : "") : lineHtml(e)).join("");
-  let body;
-  if (!s.entries.length && !S.draft) {
-    body = s.status === "open" && !sealed()
-      ? `<div class="empty"><h2>No entries yet</h2><p>Play the episode and press <kbd>[</kbd> when John starts his final ruling and <kbd>]</kbd> when he finishes, or drag across the strip. Then key the verdict.</p></div>`
-      : `<div class="empty"><h2>No rulings in this session</h2><p>${s.no_rulings ? "Closed with no rulings, confirmed." : "Nothing was entered."}</p></div>`;
-  } else {
-    body = `<ol class="docket">${lines}</ol>`;
+  const pending = pendingFindings();
+  const open = sessionOpen() && !sealed();
+  if (S.sel >= pending.length) S.sel = Math.max(0, pending.length - 1);
+  const fixing = S.draft && S.draft.mode === "fix" ? S.draft.candidate_id : null;
+  let html = "";
+  if (open && pending.length) {
+    html += `<div class="section-head"><h2>To review · ${pending.length}</h2><p>Every run’s findings plus the scorecard, pooled. Who found each one is hidden.</p></div>
+      <ol class="docket">${pending.map((c, i) => c.candidate_id === fixing ? draftHtml(stampFlash) : findingHtml(c, i)).join("")}</ol>`;
+  } else if (open && s.candidates.length) {
+    html += `<p class="queue-done"><b>All ${s.candidates.length} findings reviewed.</b> Add anything they missed with <kbd>[</kbd> <kbd>]</kbd>, then close the session.</p>`;
   }
-  return body + sessionFootHtml();
+  const record = (S.draft && S.draft.mode === "new" ? draftHtml(stampFlash) : "") +
+    s.entries.map(e => (S.draft && ["edit", "supersede"].includes(S.draft.mode) && S.draft.ruling_id === e.ruling_id) ? draftHtml(stampFlash) + (S.draft.mode === "supersede" ? lineHtml(e) : "") : lineHtml(e)).join("");
+  html += `<div class="section-head"><h2>On the record · ${liveEntries().length}</h2><p>Approved, fixed and added rulings.</p></div>`;
+  html += record ? `<ol class="docket">${record}</ol>`
+    : `<div class="empty"><p>${s.status === "open" && !sealed() ? "Nothing yet. Approve a finding, or mark a ruling no source found with [ and ]." : (s.no_rulings ? "Closed with no rulings, confirmed." : "Nothing was entered.")}</p></div>`;
+  const aside = s.candidates.filter(c => c.decision === "rejected");
+  if (aside.length) {
+    html += `<div class="section-head"><h2>Set aside · ${aside.length}</h2><p>Rejected findings: not a ruling, a duplicate, or wrong.</p></div>
+      <ul class="aside-list">${aside.map(c => `<li><span class="what">${esc(c.subject)}</span><span>${c.found_by} of ${c.runs_total} runs${c.on_scorecard ? " · on the scorecard" : ""}</span>
+        ${open ? `<button class="btn quiet small" data-act="undo" data-cid="${esc(c.candidate_id)}">Undo</button>` : ""}</li>`).join("")}</ul>`;
+  }
+  return html + sessionFootHtml();
+}
+function findingHtml(c, i) {
+  const split = Object.keys(c.verdict_split || {}).length > 1
+    ? ` · split ${Object.entries(c.verdict_split).map(([v, n]) => `${n} ${STAMP_WORD[v].toLowerCase()}`).join(", ")}` : "";
+  const found = c.found_by
+    ? `found by <b>${c.found_by} of ${c.runs_total}</b> runs${c.on_scorecard ? " · also on the scorecard" : ""}${split}`
+    : `only on the scorecard · no run found it, so there is no timestamp or proposed verdict`;
+  return `<li class="line finding ${i === S.sel ? "active" : ""}" data-finding="${i}">
+    <div>${c.span ? `<button class="play-span" data-act="play-finding" data-i="${i}" aria-label="Play this span">${ICON.play}</button>` : ""}</div>
+    <div class="l-span">${c.span ? `${tc(c.span[0])} – ${tc(c.span[1])}` : "no timestamp"}</div>
+    <div class="l-body"><div class="l-subject">${esc(c.subject)}</div>
+      <div class="found">${esc(c.category)} · ${found}</div>
+      ${c.quotes.length ? `<ul class="quotes">${c.quotes.map(q => `<li><button data-seekto="${q.start_s}"><span class="at">${tc(q.start_s, false)}</span>“${esc(q.quote)}”</button></li>`).join("")}</ul>` : ""}
+    </div>
+    <div class="l-stamp">${c.verdict ? stampHtml(c.verdict, c.verdict_strength, "", i) : `<span class="stamp blank">No proposal</span>`}</div>
+    <div class="finding-actions">
+      <button class="btn green small" data-act="approve" data-i="${i}" ${c.span && c.verdict ? "" : "disabled"}>Approve <kbd>↵</kbd></button>
+      <button class="btn quiet small" data-act="fix" data-i="${i}">Fix <kbd>E</kbd></button>
+      <button class="btn danger small" data-act="reject" data-i="${i}">Reject <kbd>X</kbd></button>
+    </div>
+  </li>`;
 }
 function lineHtml(e) {
   const canEdit = sessionOpen() && !sealed();
@@ -659,7 +731,8 @@ function lineHtml(e) {
 function draftHtml(stampFlash) {
   const d = S.draft;
   const k = d.mode === "edit" ? kOf(d.ruling_id) : S.session.next_k;
-  const note = d.mode === "supersede"
+  const note = d.mode === "fix" ? "Correct whatever the finding got wrong (span, verdict, subject, speaker), then Enter."
+    : d.mode === "supersede"
     ? `Correcting sealed #${kOf(d.ruling_id)}: enters #${k} and bumps the reference version.`
     : d.mode === "edit" ? `Amending #${k}.` : "Key verdict, strength and speaker; T names the subject; Enter enters it.";
   const seg = (name, label, opts, val, disabled = false) => `<div class="field"><span class="label">${label}</span><div class="seg" role="group" aria-label="${label}">${opts.map(([v, text, key]) =>
@@ -686,7 +759,7 @@ function draftHtml(stampFlash) {
     </div>
     <div class="l-stamp">${stampHtml(d.verdict, d.verdict_strength, stampFlash ? "press" : "", k)}</div>
     <div class="writing-foot">
-      <button class="btn" data-act="save">${d.mode === "supersede" ? "Enter correction" : d.mode === "edit" ? "Save amendment" : "Enter ruling"} <kbd>↵</kbd></button>
+      <button class="btn" data-act="save">${d.mode === "supersede" ? "Enter correction" : d.mode === "edit" ? "Save amendment" : d.mode === "fix" ? "Enter fixed ruling" : "Enter ruling"} <kbd>↵</kbd></button>
       <button class="btn quiet" data-act="cancel">Cancel <kbd>Esc</kbd></button>
       ${d.mode === "edit" ? `<button class="btn danger" data-act="delete">Strike entry</button>` : ""}
       ${S.draftError ? `<span class="err" role="alert">${esc(S.draftError)}</span>` : `<span class="writing-note">${note}</span>`}
@@ -698,23 +771,26 @@ function sessionFootHtml() {
   if (sealed()) return "";
   if (s.status === "closed") {
     return `<div class="session-foot"><button class="btn quiet" data-act="reopen">Reopen session</button>
-      <p>Closed. The clerk’s transcript is unlocked for checking spans.</p></div>`;
+      <p>Closed. Reopen to change anything before the seal.</p></div>`;
   }
-  if (S.confirm === "close-empty") {
-    return `<div class="session-foot"><div class="confirm"><p>Close with no rulings? This records that John gives no ruling anywhere in this episode.</p>
-      <button class="btn" data-act="close-empty-yes">Close with no rulings</button>
-      <button class="btn quiet" data-act="cancel-confirm">Keep listening</button></div></div>`;
+  if (S.confirm === "close-check") {
+    const none = liveEntries().length === 0;
+    return `<div class="session-foot"><div class="confirm"><p>${none ? "Nothing is on the record. Close as an episode where John gives no ruling at all?" : "Anything the findings missed? Skim the Transcript tab if unsure."} Closing locks these entries until you reopen.</p>
+      <button class="btn" data-act="close-yes">${none ? "Close with no rulings" : "Nothing missing, close"}</button>
+      <button class="btn quiet" data-act="cancel-confirm">Keep checking</button></div></div>`;
   }
-  return `<div class="session-foot"><button class="btn green" data-act="close" ${S.draft ? "disabled" : ""}>Close session</button>
-    <p>${S.draft ? "Enter or cancel the open entry first." : "Close once every ruling is entered. Closing unlocks the clerk’s transcript."}</p></div>`;
+  const left = pendingFindings().length;
+  const blocked = S.draft || left;
+  return `<div class="session-foot"><button class="btn green" data-act="close" ${blocked ? "disabled" : ""}>Close session</button>
+    <p>${S.draft ? "Enter or cancel the open entry first." : left ? `${left} finding${left === 1 ? "" : "s"} still to review.` : "Every finding is reviewed."}</p></div>`;
 }
-function clerkHtml() {
+function transcriptHtml() {
   const s = S.session;
   if (!s.transcript) {
-    return `<div class="locked"><h2>${ICON.lock} Held until the session is closed</h2>
-      <p>Listen first. The clerk’s transcript (candidate B) stays sealed while the session is open so the text can’t steer the reference. Close the session to check your spans against it.</p></div>`;
+    return `<div class="locked"><h2>${ICON.lock} No transcript for this episode</h2>
+      <p>Candidate B hasn’t been transcribed and enrolled for it yet.</p></div>`;
   }
-  return `<p style="color:var(--muted);font-size:13px;margin:14px 0 0">Candidate B transcript with enrolled speakers. Click a line to play from it.</p>
+  return `<p style="color:var(--muted);font-size:13px;margin:14px 0 0">Candidate B transcript with enrolled speakers, for finding rulings the pool missed. Click a line to play from it.</p>
     <ol class="transcript" id="transcript">${s.transcript.map(t =>
       `<li data-seekto="${t.start}" data-start="${t.start}" data-end="${t.end}"><span class="when">${tc(t.start, false)}</span><span class="who ${esc(t.speaker)}">${esc(t.speaker)}</span><span>${esc(t.text)}</span></li>`).join("")}</ol>`;
 }
@@ -875,19 +951,28 @@ function drawStrip() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.textBaseline = "top";
 
+  const dashedSpan = (a, b, color, dash, label) => {
+    const left = Math.min(a, b);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash(dash);
+    ctx.strokeRect(left, top - 6, Math.abs(b - a) || 2, base - top + 6);
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.font = "800 11px Public Sans, system-ui, sans-serif";
+    ctx.fillText(label, left + 4, 5);
+  };
+
   // draft span
   const d = S.draft;
   if (d && d.ruling_start_s != null) {
-    const a = x(d.ruling_start_s), b = d.ruling_end_s != null ? x(d.ruling_end_s) : xNow;
-    ctx.strokeStyle = "#1c2230";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 3]);
-    ctx.strokeRect(Math.min(a, b), top - 6, Math.abs(b - a) || 2, base - top + 6);
-    ctx.setLineDash([]);
-    ctx.fillStyle = "#1c2230";
-    ctx.font = "800 11px Public Sans, system-ui, sans-serif";
-    ctx.fillText(d.mode === "new" ? "new" : "#" + kOf(d.ruling_id), Math.min(a, b) + 4, 5);
+    const label = d.ruling_id ? "#" + kOf(d.ruling_id) : d.mode;
+    dashedSpan(x(d.ruling_start_s), d.ruling_end_s != null ? x(d.ruling_end_s) : xNow, "#1c2230", [4, 3], label);
   }
+
+  // the selected finding's span, while nothing is being drafted
+  const f = !d && S.tab === "entries" && sessionOpen() && !sealed() ? pendingFindings()[S.sel] : null;
+  if (f && f.span) dashedSpan(x(f.span[0]), x(f.span[1]), "#2f5d50", [2, 3], "review");
 
   // playhead
   const ph = Math.round(x(player.currentTime || 0)) + 0.5;
@@ -925,6 +1010,7 @@ function tick() {
   drawStrip();
   const d = S.draft, span = d && d.ruling_start_s != null && d.ruling_end_s != null ? d : S.session && S.session.entries.find(e => e.ruling_id === S.activeId);
   if (S.loop && span && player.currentTime >= span.ruling_end_s) player.currentTime = span.ruling_start_s;
+  if (S.stopAt != null && player.currentTime >= S.stopAt) stopSpan();
   highlightTranscript();
   if (!player.paused) raf = requestAnimationFrame(tick);
 }
@@ -1011,9 +1097,10 @@ async function saveDraft() {
   try {
     let saved;
     if (d.mode === "supersede") saved = await api(`/api/sessions/${S.n}/supersede`, { ...body, reason: d.reason });
+    else if (d.mode === "fix") saved = await api(`/api/sessions/${S.n}/review`, { ...body, ruling_id: undefined, candidate_id: d.candidate_id, action: "fix" });
     else saved = await api(`/api/sessions/${S.n}/entries`, d.mode === "new" ? { ...body, ruling_id: undefined } : body);
     S.draft = null; S.draftError = null; S.pressId = saved.ruling_id; S.activeId = saved.ruling_id;
-    toast(d.mode === "supersede" ? `Entered #${kOf(saved.ruling_id)}, superseding #${kOf(d.ruling_id)} (v${saved.reference_version})` : `Entry #${kOf(saved.ruling_id)} entered`);
+    toast(d.mode === "supersede" ? `Entered #${kOf(saved.ruling_id)}, superseding #${kOf(d.ruling_id)} (v${saved.reference_version})` : d.mode === "fix" ? `Fixed and entered as #${kOf(saved.ruling_id)}` : `Entry #${kOf(saved.ruling_id)} entered`);
     await refresh();
     setTimeout(() => { S.pressId = null; }, 600);
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
@@ -1035,6 +1122,8 @@ function setChoice(name, val) {
 
 // ---------- events ----------
 document.addEventListener("click", async ev => {
+  const row = ev.target.closest(".line.finding");
+  if (row && !ev.target.closest("button")) { S.sel = Number(row.dataset.finding); renderPanel(); return; }
   const t = ev.target.closest("button, [data-seekto], .line.clickable, a");
   if (!t) return;
   if (t.dataset.tab) {
@@ -1053,6 +1142,13 @@ document.addEventListener("click", async ev => {
   const act = t.dataset.act;
   if (!act) return;
   try {
+    if (act === "play-finding") { playFinding(Number(t.dataset.i)); return; }
+    if (["approve", "fix", "reject"].includes(act)) { await decide(Number(t.dataset.i), act); return; }
+    if (act === "undo") {
+      const c = S.session.candidates.find(x => x.candidate_id === t.dataset.cid);
+      await api(`/api/sessions/${S.n}/review`, { candidate_id: t.dataset.cid, action: "undo" });
+      toast(`Back in review: ${c ? c.subject : "finding"}`); await refresh(); return;
+    }
     if (act === "mark") { if (!S.draft) newDraft({ ruling_start_s: Math.round(player.currentTime * 10) / 10 }); rerenderDraft(); }
     else if (act === "set-start") markAt("start");
     else if (act === "set-end") markAt("end");
@@ -1064,12 +1160,13 @@ document.addEventListener("click", async ev => {
       toast(`Entry #${kOf(S.draft.ruling_id)} struck; the number is retired`);
       S.draft = null; S.activeId = null; await refresh();
     }
-    else if (act === "close") {
-      const has = S.session.entries.length > 0;
-      if (!has) { S.confirm = "close-empty"; renderPanel(); return; }
-      await api(`/api/sessions/${S.n}/close`, {}); S.tab = "clerk"; toast(`Session No. ${S.n} closed`); await refresh();
+    else if (act === "close") { S.confirm = "close-check"; renderPanel(); }
+    else if (act === "close-yes") {
+      await api(`/api/sessions/${S.n}/close`, { no_rulings: liveEntries().length === 0 });
+      S.confirm = null; toast(`Session No. ${S.n} closed`); await refresh();
+      const next = S.overview.sessions.find(x => x.status === "open");
+      if (next) location.hash = `#/session/${next.episode}`;
     }
-    else if (act === "close-empty-yes") { await api(`/api/sessions/${S.n}/close`, { no_rulings: true }); S.confirm = null; toast(`Session No. ${S.n} closed with no rulings`); await refresh(); }
     else if (act === "reopen") { await api(`/api/sessions/${S.n}/reopen`, {}); toast(`Session No. ${S.n} reopened`); await refresh(); }
     else if (act === "cancel-confirm") { S.confirm = null; renderRail(); renderPanel(); }
     else if (act === "seal") { S.confirm = "seal"; renderRail(); }
@@ -1081,6 +1178,34 @@ document.addEventListener("click", async ev => {
     }
   } catch (e) { toast(e.message, true); }
 });
+function stopSpan() { S.stopAt = null; player.pause(); }
+function playFinding(i) {
+  const c = pendingFindings()[i];
+  if (!c || !c.span || !player.src) return;
+  S.sel = i;
+  S.stopAt = c.span[1] + 2;
+  seekTo(Math.max(0, c.span[0] - 2));
+  renderPanel();
+}
+async function decide(i, action) {
+  const c = pendingFindings()[i];
+  if (!c) return;
+  if (action === "fix") {
+    S.sel = i;
+    newDraft({ mode: "fix", candidate_id: c.candidate_id, ruling_start_s: c.span?.[0] ?? null, ruling_end_s: c.span?.[1] ?? null, subject: c.subject, category: c.category || "robot", verdict: c.verdict, verdict_strength: c.verdict_strength });
+    if (c.span) seekTo(c.span[0], false);
+    rerenderDraft();
+    return;
+  }
+  try {
+    const res = await api(`/api/sessions/${S.n}/review`, { candidate_id: c.candidate_id, action });
+    if (action === "approve") { S.pressId = res.ruling_id; toast(`Approved: #${kOf(res.ruling_id)} ${c.subject}`); }
+    else toast(`Set aside: ${c.subject}`);
+    if (S.stopAt != null) stopSpan();
+    await refresh();
+    setTimeout(() => { S.pressId = null; }, 600);
+  } catch (e) { toast(e.message, true); }
+}
 function selectLine(id) {
   const e = S.session.entries.find(x => x.ruling_id === id);
   if (!e) return;
@@ -1104,14 +1229,24 @@ document.addEventListener("keydown", ev => {
   }
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   if (el.matches(".line") && ev.key === "Enter") { selectLine(el.dataset.id); return; }
-  const k = ev.key;
+  const k = ev.key, lower = k.toLowerCase();
   if (k === " ") { ev.preventDefault(); togglePlay(); return; }
   if (k === "ArrowLeft" || k === "ArrowRight") { ev.preventDefault(); seekBy((k === "ArrowLeft" ? -1 : 1) * (ev.shiftKey ? 1 : 5)); return; }
   if (k === "[") { ev.preventDefault(); markAt("start"); return; }
   if (k === "]") { ev.preventDefault(); markAt("end"); return; }
   if (k === "l" || k === "L") { setLoop(!S.loop); toast(S.loop ? "Looping the span" : "Loop off"); return; }
-  if (!S.draft) return;
-  const lower = k.toLowerCase();
+  if (!S.draft) {
+    if (S.tab !== "entries" || !sessionOpen() || sealed()) return;
+    const n = pendingFindings().length;
+    if (!n) return;
+    if (k === "Enter" && el.matches("button, a")) return;  // let the focused control act
+    if (k === "ArrowDown" || k === "ArrowUp") { ev.preventDefault(); S.sel = Math.max(0, Math.min(n - 1, S.sel + (k === "ArrowDown" ? 1 : -1))); renderPanel(); document.querySelector(".line.finding.active")?.scrollIntoView({ block: "nearest" }); return; }
+    if (lower === "p") { playFinding(S.sel); return; }
+    if (k === "Enter") { ev.preventDefault(); decide(S.sel, "approve"); return; }
+    if (lower === "e") { ev.preventDefault(); decide(S.sel, "fix"); return; }
+    if (lower === "x") { ev.preventDefault(); decide(S.sel, "reject"); return; }
+    return;
+  }
   if (lower === "t") { ev.preventDefault(); const f = $("#d-subject"); if (f) { f.focus(); f.select(); } return; }
   const v = VERDICTS.find(x => x[2].toLowerCase() === lower);
   if (v) { setChoice("verdict", v[0]); return; }

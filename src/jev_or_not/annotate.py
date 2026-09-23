@@ -1,12 +1,15 @@
 """Pilot reference annotation desk (docs/annotation_procedure.md).
 
 ``jev-or-not annotate`` serves a single-page tool on 127.0.0.1 for building
-``data/gold/pilot_reference.jsonl`` by ear. The docket works in two stages:
+``data/gold/pilot_reference.jsonl``. The docket works in two stages:
 
-* **Open record.** Each pilot episode is a session. Rulings are entered as
-  ``PilotReference`` rows and validated on every save. A session closes
-  once its rulings are all entered; only a closed session shows the clerk's
-  transcript (candidate B), so no transcript can steer the listening.
+* **Open record.** Each pilot episode is a session. The reference is
+  *pooled*: every extraction run's rulings plus the scorecard's subjects are
+  merged into blind candidates (``review_pool``), and Rex approves, fixes,
+  or rejects each one against its audio span, adding any ruling no source
+  found. Every decision is logged to ``data/gold/pilot_review.jsonl``;
+  approved and added rulings become validated ``PilotReference`` rows. A
+  session closes once no candidate is pending.
 * **Sealed record.** When all sessions are closed, the record is sealed at
   1.0.0 (``data/gold/pilot_reference.seal.json``). Rows are then never edited
   in place: a correction is a superseding row plus an adjudication entry and
@@ -29,7 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import ValidationError
 
@@ -46,11 +49,13 @@ from jev_or_not.extract import (
 from jev_or_not.fingerprint import file_hash
 from jev_or_not.models import AdjudicationEntry, PilotReference
 from jev_or_not.pilot import PILOT_PATH, SCORECARD_VERIFIED_PATH
+from jev_or_not.review_pool import pool
 from jev_or_not.scorecard import ensure_adjudication_file, read_adjudication_entries
 
 SCHEMA_VERSION = 1
 REFERENCE_PATH = Path("data/gold/pilot_reference.jsonl")
 SEAL_PATH = Path("data/gold/pilot_reference.seal.json")
+REVIEW_PATH = Path("data/gold/pilot_review.jsonl")
 STATE_PATH = Path("local/annotate/state.json")
 PEAKS_DIR = Path("local/annotate/peaks")
 UI_PATH = Path(__file__).parent / "annotate_ui" / "index.html"
@@ -58,7 +63,7 @@ FONTS_DIR = UI_PATH.parent / "fonts"  # vendored Public Sans (OFL), no CDN at ru
 
 ANNOTATOR = "Rex Lorenzo"  # matches decided_by in data/gold/adjudication.jsonl
 SEAL_VERSION = "1.0.0"
-CLERK_CANDIDATE = "B"  # transcript shown for the clerk's check after closing
+TRANSCRIPT_CANDIDATE = "B"  # transcript shown for finding missed rulings
 PEAKS_PER_S = 20
 PEAKS_RATE_HZ = 4000
 EDITABLE_FIELDS = (
@@ -102,6 +107,17 @@ def _ruling_k(ruling_id: str) -> int:
     return int(ruling_id.rpartition("#")[2])
 
 
+class _PoolSources(NamedTuple):
+    verdicts_by_episode: dict[str, list[dict]]  # each tagged with its blind ``run`` key
+    runs_total: int
+    scorecard: list[dict]
+    review_log: list[dict]
+
+
+def _pending(candidates: list[dict]) -> int:
+    return sum(not c["decision"] for c in candidates)
+
+
 def _find_entry(rows: list[PilotReference], ep: dict, ruling_id: str) -> PilotReference:
     row = next((r for r in rows if r.ruling_id == ruling_id), None)
     if row is None or row.episode_id != ep["episode_id"]:
@@ -127,6 +143,7 @@ class Desk:
     manifest_path: Path = MANIFEST_PATH
     state_path: Path = STATE_PATH
     peaks_dir: Path = PEAKS_DIR
+    review_path: Path = REVIEW_PATH
     # one writer at a time; the server is threaded
     lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -225,6 +242,7 @@ class Desk:
         state = self.state()
         seal = self.seal()
         audio_paths = self._audio_paths()
+        sources = self._pool_sources()
         sessions = []
         for ep in self.pilot():
             s = self._session_state(state, ep["episode_id"])
@@ -237,6 +255,7 @@ class Desk:
                     "status": "sealed" if seal else s["status"],
                     "entries": sum(1 for r in rows if r.episode_id == ep["episode_id"]),
                     "resume_s": s["resume_s"],
+                    "pending": _pending(self.candidates(ep, sources)),
                     "audio_available": self._has_audio(audio_paths, ep["episode_id"]),
                 }
             )
@@ -256,7 +275,7 @@ class Desk:
         superseded = self._superseded_ids() if seal else {}
         for e in entries:
             e["superseded_by"] = superseded.get(e["ruling_id"])
-        closed = bool(seal) or s["status"] == "closed"
+        candidates = self.candidates(ep)
         return {
             **ep,
             "status": "sealed" if seal else s["status"],
@@ -264,19 +283,22 @@ class Desk:
             "resume_s": s["resume_s"],
             "next_k": s["next_k"],
             "entries": entries,
+            "candidates": candidates,
+            "pending": _pending(candidates),
             "sealed": seal,
             "audio_available": self._has_audio(self._audio_paths(), ep["episode_id"]),
-            # The independence rule: no transcript until the session is closed.
-            "transcript": self._clerk_transcript(ep["episode_id"]) if closed else None,
+            # Pooled review already shows model findings, so the transcript is
+            # open throughout: it is how missed rulings get found quickly.
+            "transcript": self._transcript(ep["episode_id"]),
         }
 
-    def _clerk_transcript(self, episode_id: str) -> list[dict] | None:
-        """The clerk's transcript, resolved the same way extraction resolves it."""
+    def _transcript(self, episode_id: str) -> list[dict] | None:
+        """Candidate B's transcript, resolved the same way extraction resolves it."""
         row = next(
             (
                 r
                 for r in index_rows(
-                    CLERK_CANDIDATE, self.enrolled_index_path, self.transcript_index_path
+                    TRANSCRIPT_CANDIDATE, self.enrolled_index_path, self.transcript_index_path
                 )
                 if r["episode_id"] == episode_id
             ),
@@ -348,6 +370,149 @@ class Desk:
             raise DeskError(f"no audio for episode {number}; run `jev-or-not download`", 404)
         return audio_paths[ep["episode_id"]]
 
+    # ---- pooled review -----------------------------------------------
+
+    def _review_log(self) -> list[dict]:
+        return list(read_jsonl(self.review_path)) if self.review_path.exists() else []
+
+    def _write_review_log(self, log: list[dict]) -> None:
+        write_lines_atomic(self.review_path, (json.dumps(r, sort_keys=True) for r in log))
+
+    def _log_decision(
+        self,
+        ep: dict,
+        decision: str,
+        *,
+        candidate: dict | None = None,
+        ruling_id: str | None = None,
+        reason: str = "",
+        subject: str | None = None,
+    ) -> None:
+        c = candidate or {}
+        entry = {
+            "schema_version": SCHEMA_VERSION,
+            "episode_id": ep["episode_id"],
+            "candidate_id": c.get("candidate_id"),
+            "subject": c.get("subject") or subject,
+            "proposed_verdict": c.get("verdict"),
+            "found_by": c.get("found_by", 0),
+            "runs_total": c.get("runs_total"),
+            "on_scorecard": c.get("on_scorecard", False),
+            "decision": decision,
+            "ruling_id": ruling_id,
+            "reason": reason or None,
+            "decided_by": ANNOTATOR,
+            "decided_at": _now(),
+        }
+        self._write_review_log([*self._review_log(), entry])
+
+    def _strike(self, rows: list[PilotReference], ruling_id: str) -> None:
+        """Remove a ruling and its approve/fix/add decision; the number is
+        retired, never reissued, and its finding returns to pending."""
+        self._write_rows([r for r in rows if r.ruling_id != ruling_id])
+        self._write_review_log([r for r in self._review_log() if r["ruling_id"] != ruling_id])
+
+    def _candidate_by_hash(self) -> dict[str, str]:
+        """Transcription candidate (A, A2, B) for each transcript hash."""
+        candidate_by_hash: dict[str, str] = {}
+        for path, key in (
+            (self.enrolled_index_path, "enrolled_hash"),
+            (self.transcript_index_path, "transcript_hash"),
+        ):
+            if path.exists():
+                for row in read_jsonl(path):
+                    candidate_by_hash.setdefault(row[key], row["candidate"])
+        return candidate_by_hash
+
+    def _pool_sources(self) -> _PoolSources:
+        """Everything ``candidates`` reads, loaded once so a caller covering
+        every episode doesn't re-read it per episode."""
+        candidate_by_hash = self._candidate_by_hash()
+        by_episode: dict[str, list[dict]] = {}
+        runs: set[str] = set()
+        if self.verdicts_path.exists():
+            for v in read_jsonl(self.verdicts_path):
+                run = f"{candidate_by_hash.get(v['transcript_hash'], '?')}|{v['extractor_model']}"
+                runs.add(run)
+                by_episode.setdefault(v["episode_id"], []).append({**v, "run": run})
+        scorecard = list(read_jsonl(self.scorecard_path)) if self.scorecard_path.exists() else []
+        return _PoolSources(by_episode, len(runs), scorecard, self._review_log())
+
+    def candidates(self, ep: dict, sources: _PoolSources | None = None) -> list[dict]:
+        """This episode's pooled candidates with Rex's decision merged in."""
+        by_episode, runs_total, all_scorecard, review_log = sources or self._pool_sources()
+        scorecard = [
+            r
+            for r in all_scorecard
+            if r.get("episode_id") == ep["episode_id"] and r.get("review_status") != "excluded"
+        ]
+        pooled = pool(
+            ep["episode_id"],
+            ep["duration_s"],
+            by_episode.get(ep["episode_id"], []),
+            scorecard,
+            runs_total,
+        )
+        decided = {
+            r["candidate_id"]: r
+            for r in review_log
+            if r["episode_id"] == ep["episode_id"] and r["candidate_id"]
+        }
+        for c in pooled:
+            d = decided.get(c["candidate_id"])
+            c["decision"] = d["decision"] if d else None
+            c["ruling_id"] = d["ruling_id"] if d else None
+        return pooled
+
+    def review(self, number: int, body: dict) -> dict:
+        """Approve, fix, reject, or undo one pooled candidate."""
+        action = body.get("action")
+        if action not in ("approve", "fix", "reject", "undo"):
+            raise DeskError("action must be approve, fix, reject, or undo")
+        with self.lock:
+            ep, state, s = self._unsealed_session(number, require_open=True)
+            cand = next(
+                (c for c in self.candidates(ep) if c["candidate_id"] == body.get("candidate_id")),
+                None,
+            )
+            if cand is None:
+                raise DeskError("no such finding in this session", 404)
+            rows = self.rows()
+            if action == "undo":
+                if not cand["decision"]:
+                    raise DeskError("that finding has no decision to undo", 409)
+                if cand["ruling_id"]:
+                    self._strike(rows, cand["ruling_id"])
+                else:  # a rejection: no ruling behind it
+                    self._write_review_log(
+                        [r for r in self._review_log() if r["candidate_id"] != cand["candidate_id"]]
+                    )
+                return {"candidate_id": cand["candidate_id"], "decision": None}
+            if cand["decision"]:
+                raise DeskError("already decided; undo it first", 409)
+            if action == "reject":
+                self._log_decision(ep, "rejected", candidate=cand, reason=body.get("reason", ""))
+                return {"candidate_id": cand["candidate_id"], "decision": "rejected"}
+            if action == "approve":
+                if not cand["span"] or not cand["verdict"]:
+                    raise DeskError("this finding has no verdict or span to approve; fix it")
+                payload = {
+                    "subject": cand["subject"],
+                    "category": cand["category"],
+                    "verdict": cand["verdict"],
+                    "verdict_strength": cand["verdict_strength"],
+                    "ruling_start_s": cand["span"][0],
+                    "ruling_end_s": cand["span"][1],
+                    "speaker": "JOHN",
+                }
+            else:
+                payload = body
+            decision = "approved" if action == "approve" else "fixed"
+            row = self._enter_ruling(
+                ep, state, s, rows, payload, decision, candidate=cand, reason=body.get("reason", "")
+            )
+            return {**row.model_dump(), "decision": decision}
+
     # ---- open-record writes ------------------------------------------
 
     def _build_row(self, ep: dict, ruling_id: str, payload: dict, version: str) -> PilotReference:
@@ -383,6 +548,34 @@ class Desk:
             )
             raise DeskError(msgs) from exc
 
+    def _enter_ruling(
+        self,
+        ep: dict,
+        state: dict,
+        s: dict,
+        rows: list[PilotReference],
+        payload: dict,
+        decision: str,
+        *,
+        candidate: dict | None = None,
+        reason: str = "",
+    ) -> PilotReference:
+        """Add a new row under a fresh ruling id and log how it got there."""
+        ruling_id = self._issue_ruling_id(s, rows, ep["episode_id"])
+        row = self._build_row(ep, ruling_id, payload, SEAL_VERSION)
+        s["no_rulings"] = False
+        self._write_rows([*rows, row])
+        self._write_state(state)
+        self._log_decision(
+            ep,
+            decision,
+            candidate=candidate,
+            ruling_id=ruling_id,
+            reason=reason,
+            subject=row.subject,
+        )
+        return row
+
     def save_entry(self, number: int, payload: dict) -> dict:
         """Create (no ``ruling_id``) or update an entry in an open session."""
         with self.lock:
@@ -392,14 +585,10 @@ class Desk:
             if ruling_id:
                 _find_entry(rows, ep, ruling_id)
                 row = self._build_row(ep, ruling_id, payload, SEAL_VERSION)
-                rows = [row if r.ruling_id == ruling_id else r for r in rows]
+                self._write_rows([row if r.ruling_id == ruling_id else r for r in rows])
             else:
-                ruling_id = self._issue_ruling_id(s, rows, ep["episode_id"])
-                row = self._build_row(ep, ruling_id, payload, SEAL_VERSION)
-                s["no_rulings"] = False
-                rows.append(row)
-            self._write_rows(rows)
-            self._write_state(state)
+                # a ruling no source found: the pooled reference's added recall
+                row = self._enter_ruling(ep, state, s, rows, payload, "added")
             return row.model_dump()
 
     def delete_entry(self, number: int, ruling_id: str) -> None:
@@ -407,8 +596,7 @@ class Desk:
             ep, _, _ = self._unsealed_session(number, require_open=True)
             rows = self.rows()
             _find_entry(rows, ep, ruling_id)
-            # the number is retired, never reissued
-            self._write_rows([r for r in rows if r.ruling_id != ruling_id])
+            self._strike(rows, ruling_id)
 
     def set_resume(self, number: int, position_s: float) -> None:
         with self.lock:
@@ -420,6 +608,8 @@ class Desk:
     def close_session(self, number: int, *, no_rulings: bool = False) -> None:
         with self.lock:
             ep, state, s = self._unsealed_session(number)
+            if pending := _pending(self.candidates(ep)):
+                raise DeskError(f"{pending} finding(s) still to review", 409)
             has_entries = any(r.episode_id == ep["episode_id"] for r in self.rows())
             if not has_entries and not no_rulings:
                 raise DeskError("no entries: confirm the episode has no rulings to close it")
@@ -572,14 +762,7 @@ class Desk:
     def extractions(self, number: int) -> dict:
         self._require_sealed()
         ep = self._episode(number)
-        candidate_by_hash: dict[str, str] = {}
-        for path, key in (
-            (self.enrolled_index_path, "enrolled_hash"),
-            (self.transcript_index_path, "transcript_hash"),
-        ):
-            if path.exists():
-                for row in read_jsonl(path):
-                    candidate_by_hash.setdefault(row[key], row["candidate"])
+        candidate_by_hash = self._candidate_by_hash()
         runs: dict[str, list[dict]] = {}
         if self.verdicts_path.exists():
             for v in read_jsonl(self.verdicts_path):
@@ -756,6 +939,7 @@ _ROUTES: list[tuple[str, re.Pattern, Callable[..., None]]] = [
             _post(lambda d, b, n: d.close_session(n, no_rulings=bool(b.get("no_rulings")))),
         ),
         ("POST", _S + "/reopen$", _post(lambda d, b, n: d.reopen_session(n))),
+        ("POST", _S + "/review$", _post(lambda d, b, n: d.review(n, b))),
         (
             "POST",
             _S + "/supersede$",
