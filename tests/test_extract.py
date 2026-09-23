@@ -8,7 +8,7 @@ import pytest
 
 from jev_or_not import extract as extract_module
 from jev_or_not.ledger import open_ledger
-from jev_or_not.models import Episode, EvidenceQuote
+from jev_or_not.models import MAX_QUOTE_WORDS, Episode, EvidenceQuote
 
 
 def _episode(**overrides) -> Episode:
@@ -176,12 +176,26 @@ def test_ingest_accepts_valid_output(conn, tmp_path):
     assert (tmp_path / "verdicts.jsonl").exists()
 
 
+def test_evidence_quote_accepts_up_to_the_word_cap():
+    EvidenceQuote(quote=" ".join(["word"] * MAX_QUOTE_WORDS), start_s=1.0, end_s=2.0)
+    with pytest.raises(ValueError, match="at most"):
+        EvidenceQuote(quote=" ".join(["word"] * (MAX_QUOTE_WORDS + 1)), start_s=1.0, end_s=2.0)
+
+
 @pytest.mark.parametrize(
     "reason,overrides",
     [
         (
-            "16-word quote",
-            {"evidence_quotes": [{"quote": " ".join(["word"] * 16), "start_s": 1.0, "end_s": 2.0}]},
+            "over-cap quote",
+            {
+                "evidence_quotes": [
+                    {
+                        "quote": " ".join(["word"] * (MAX_QUOTE_WORDS + 1)),
+                        "start_s": 1.0,
+                        "end_s": 2.0,
+                    }
+                ]
+            },
         ),
         (
             "4th quote",

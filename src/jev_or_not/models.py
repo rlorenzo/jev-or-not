@@ -194,9 +194,18 @@ class AudioManifestEntry(Record):
     status: str
 
 
+# Longest evidence quote accepted, in whitespace-delimited words. The quotes
+# land in committed data (data/verdicts.jsonl) from copyrighted transcripts,
+# so they stay short. The extract-v1 prompt still asks for under 15; Rex
+# loosened acceptance to 30 on 2026-09-22 after haiku overshot 15 in 18 of 30
+# pilot packets, so a slightly long quote no longer discards a whole packet.
+MAX_QUOTE_WORDS = 30
+
+
 class EvidenceQuote(BaseModel):
-    """One evidence quote backing a ruling (PLAN.md Phase 3): under 15
-    whitespace-delimited words, with its transcript timestamps."""
+    """One evidence quote backing a ruling (PLAN.md Phase 3): at most
+    MAX_QUOTE_WORDS whitespace-delimited words, with its transcript
+    timestamps."""
 
     quote: str
     start_s: float
@@ -207,8 +216,8 @@ class EvidenceQuote(BaseModel):
     def _short_quote(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("quote must not be empty")
-        if len(v.split()) >= 15:
-            raise ValueError("quote must be under 15 whitespace-delimited words")
+        if len(v.split()) > MAX_QUOTE_WORDS:
+            raise ValueError(f"quote must be at most {MAX_QUOTE_WORDS} whitespace-delimited words")
         return v
 
     @field_validator("end_s")
