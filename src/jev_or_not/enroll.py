@@ -113,13 +113,18 @@ def apply_one(
     *,
     force: bool,
     run_nonce: str | None,
-    apply_dir: Path = ENROLLED_DIR,
+    apply_dir: Path | None = None,
     enrollment_path: Path = ENROLLMENT_PATH,
     host_embeddings_path: Path = HOST_EMBEDDINGS_PATH,
     timeout_s: int = TIMEOUT_S,
 ) -> dict:
     """Apply enrollment to one (episode, candidate) transcript, using the
     ledger for reuse."""
+    # Resolved at call time, not as a default argument: a default binds when
+    # the module loads, so patching ENROLLED_DIR (as the tests do) would not
+    # reach it and output would land in the real local/ tree.
+    if apply_dir is None:
+        apply_dir = ENROLLED_DIR
     episode_id = index_row["episode_id"]
     episode_label = index_row["episode_label"]
     candidate = index_row["candidate"]

@@ -79,6 +79,8 @@ def test_apply_one_reuses_matching_fingerprint(conn, tmp_path, monkeypatch):
     )
     assert first["status"] == "success"
     assert len(calls) == 1
+    # Output follows the patched ENROLLED_DIR, not the real local/ tree.
+    assert (tmp_path / "6-B.json").exists()
 
     second = enroll_module.apply_one(
         conn, row, manifest, 0.6, 0.15, "e" * 64, "c" * 64, force=False, run_nonce=None
