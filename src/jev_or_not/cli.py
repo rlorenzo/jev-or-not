@@ -1,5 +1,8 @@
+import webbrowser
+
 import typer
 
+from jev_or_not import annotate as annotate_module
 from jev_or_not import catalog as catalog_module
 from jev_or_not import download as download_module
 from jev_or_not import enroll as enroll_module
@@ -181,6 +184,25 @@ def extract_ingest_cmd(
             f"  FAILED {who} ({r.get('candidate', candidate)}/{r.get('model', model)}): "
             f"{r.get('error', r.get('reason'))}"
         )
+
+
+@app.command("annotate")
+def annotate_cmd(
+    port: int = typer.Option(8765, "--port"),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Pilot reference annotation desk on 127.0.0.1 (docs/annotation_procedure.md)."""
+    server = annotate_module.serve(port)
+    url = f"http://127.0.0.1:{port}/"
+    typer.echo(f"annotation desk: {url} (Ctrl-C to stop)")
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("stopped")
+    finally:
+        server.server_close()
 
 
 for _name in (

@@ -1,0 +1,1174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilot Reference Docket</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 fill=%22%231c2230%22/%3E%3Crect x=%226%22 y=%228%22 width=%2220%22 height=%2216%22 fill=%22none%22 stroke=%22%23f4f5f2%22 stroke-width=%222.5%22 transform=%22rotate(-6 16 16)%22/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/public-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face { font-family: "Public Sans"; src: url("/fonts/public-sans-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("/fonts/public-sans-latin-wght-italic.woff2") format("woff2"); font-weight: 100 900; font-style: italic; font-display: swap; }
+:root {
+  --paper: #f4f5f2;
+  --paper-sunk: #eaece7;
+  --paper-raised: #fbfbf9;
+  --rule: #d6dad3;
+  --rule-strong: #b3bab1;
+  --ink: #1c2230;
+  --ink-2: #3f4757;
+  --muted: #5d6573;
+  --green: #2f5d50;
+  --green-wash: rgba(47, 93, 80, 0.11);
+  --green-edge: rgba(47, 93, 80, 0.55);
+  --stamp-yes: #2d6a4e;
+  --stamp-no: #9a2b2b;
+  --stamp-amb: #85561a;
+  --stamp-none: #5b6370;
+  --danger: #9a2b2b;
+  --font: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --rail-w: 264px;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  caret-color: var(--green);
+}
+::selection { background: rgba(47, 93, 80, 0.22); color: var(--ink); }
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--rule-strong); border: 3px solid var(--paper); }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--green); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--ink); }
+kbd {
+  font: 600 11px/1 var(--font);
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 3px 5px;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  background: var(--paper-raised);
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* ---------- frame ---------- */
+.app { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); min-height: 100vh; }
+
+.rail {
+  background: var(--paper-sunk);
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.rail-head { padding: 22px 20px 16px; border-bottom: 1px solid var(--rule); }
+.rail-title { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+.rail-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.tally { display: flex; gap: 3px; margin-top: 14px; }
+.tally span { flex: 1; height: 5px; background: var(--rule); }
+.tally span.done { background: var(--green); }
+.sessions { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; }
+.sessions a {
+  display: grid;
+  grid-template-columns: 62px 1fr auto;
+  align-items: baseline;
+  gap: 4px;
+  padding: 9px 20px 9px 19px;
+  color: inherit;
+  text-decoration: none;
+}
+.sessions a:hover { background: rgba(28, 34, 48, 0.04); }
+.sessions a[aria-current="page"] { background: var(--paper); box-shadow: inset 0 -1px 0 var(--rule), inset 0 1px 0 var(--rule); }
+.sessions a[aria-current="page"] .s-no, .sessions a[aria-current="page"] .s-title { color: var(--ink); font-weight: 800; }
+.s-no { font-weight: 700; color: var(--muted); font-size: 13px; }
+.s-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-meta { grid-column: 2; font-size: 12px; color: var(--muted); }
+.s-mark { grid-row: 1 / span 2; grid-column: 3; align-self: center; width: 18px; height: 18px; color: var(--muted); }
+.s-mark.closed, .s-mark.sealed { color: var(--green); }
+.rail-foot { border-top: 1px solid var(--rule); padding: 16px 20px 20px; }
+.seal-note { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+
+main { min-width: 0; display: flex; flex-direction: column; }
+.next {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 40px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-2);
+  min-height: 42px;
+}
+.next strong { color: var(--ink); font-weight: 600; }
+.next .dot { width: 7px; height: 7px; background: var(--green); flex: none; }
+
+.caption { padding: 34px 40px 20px; }
+.caption h1 {
+  margin: 0;
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.caption h1 .inre { font-weight: 400; font-style: italic; color: var(--muted); letter-spacing: -0.01em; }
+.caption .meta { margin: 10px 0 0; color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 0 18px; }
+.caption .meta b { color: var(--ink); font-weight: 600; }
+.status-word { text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; font-weight: 700; }
+.status-word.open { color: var(--ink); }
+.status-word.closed, .status-word.sealed { color: var(--green); }
+
+/* ---------- bench ---------- */
+.bench { margin: 0 40px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule-strong); }
+.transport { display: flex; align-items: center; gap: 18px; padding: 14px 0 12px; flex-wrap: wrap; }
+.play {
+  width: 46px; height: 46px; flex: none;
+  display: grid; place-items: center;
+  background: var(--ink); color: var(--paper);
+  border: 0; cursor: pointer;
+}
+.play:hover { background: #2a3245; }
+.play svg { width: 18px; height: 18px; }
+.clock { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.clock small { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-left: 6px; }
+.t-group { display: flex; gap: 6px; align-items: center; }
+.t-btn {
+  border: 1px solid var(--rule-strong); background: var(--paper-raised);
+  padding: 6px 10px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-2);
+}
+.t-btn:hover { border-color: var(--ink-2); color: var(--ink); }
+.t-btn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.t-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.spacer { flex: 1; }
+.mark-cta {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--green); color: var(--green); background: transparent;
+  padding: 8px 14px; font-weight: 700; font-size: 14px; cursor: pointer;
+}
+.mark-cta:hover { background: var(--green-wash); }
+.mark-cta:disabled { border-color: var(--rule-strong); color: var(--muted); cursor: not-allowed; background: none; }
+.mark-cta kbd { border-color: currentColor; color: inherit; background: transparent; }
+
+.strip { position: relative; height: 132px; cursor: crosshair; user-select: none; }
+.strip canvas { display: block; width: 100%; height: 100%; }
+.strip-msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.keys {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  padding: 10px 0 12px; border-top: 1px solid var(--rule);
+  font-size: 12px; color: var(--muted);
+}
+.keys span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 28px; margin: 26px 40px 0; border-bottom: 1px solid var(--rule); }
+.tab {
+  background: none; border: 0; padding: 0 0 10px; cursor: pointer;
+  font-weight: 600; font-size: 14px; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tab:hover { color: var(--ink); }
+.tab svg { width: 12px; height: 12px; }
+.tab .count { font-weight: 500; color: var(--muted); }
+
+.panel { padding: 8px 40px 120px; }
+
+/* ---------- docket lines ---------- */
+.docket { list-style: none; margin: 0; padding: 0; }
+.line {
+  display: grid;
+  grid-template-columns: 58px 150px minmax(0, 1fr) 210px;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+}
+.line.clickable { cursor: pointer; }
+.line.clickable:hover { background: linear-gradient(90deg, transparent, rgba(28,34,48,.035) 12%, rgba(28,34,48,.035) 88%, transparent); }
+.line.active { background: var(--green-wash); }
+.l-no { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+.l-no.inking { animation: ink 520ms var(--ease-out) both; }
+@keyframes ink { 0% { color: transparent; text-shadow: 0 0 6px rgba(28,34,48,.5); } 100% { color: var(--ink); text-shadow: none; } }
+.l-no.pending { color: var(--muted); }
+.l-span { font-size: 14px; color: var(--ink-2); }
+.l-span button { background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+.l-span button:hover { text-decoration-color: var(--ink); }
+.l-subject { font-size: 17px; font-weight: 600; line-height: 1.3; }
+.l-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.l-stamp { justify-self: end; }
+.line.superseded .l-subject, .line.superseded .l-no { text-decoration: line-through; text-decoration-color: var(--muted); color: var(--muted); }
+
+.stamp {
+  display: inline-flex; flex-direction: column; align-items: center;
+  border: 2.5px solid currentColor;
+  padding: 5px 12px 4px;
+  font-weight: 800; font-size: 19px; letter-spacing: 0.12em; line-height: 1.05;
+  text-transform: uppercase;
+  transform: rotate(var(--tilt, -1deg));
+  mix-blend-mode: multiply;
+  white-space: nowrap;
+}
+.stamp small { font-size: 10px; letter-spacing: 0.18em; font-weight: 700; margin-top: 2px; }
+.stamp.yes { color: var(--stamp-yes); }
+.stamp.no { color: var(--stamp-no); }
+.stamp.ambiguous { color: var(--stamp-amb); }
+.stamp.no_ruling { color: var(--stamp-none); border-style: dashed; }
+.stamp.blank { color: var(--muted); border-style: dashed; opacity: .75; }
+.stamp.small-stamp { font-size: 13px; padding: 3px 8px 2px; border-width: 2px; }
+.stamp.press { animation: press 420ms var(--ease-out) both; }
+@keyframes press {
+  0% { transform: rotate(var(--tilt, -1deg)) scale(1.55); opacity: 0; filter: blur(3px); }
+  55% { transform: rotate(var(--tilt, -1deg)) scale(0.96); opacity: 1; filter: blur(0); }
+  100% { transform: rotate(var(--tilt, -1deg)) scale(1); }
+}
+
+/* ---------- draft line: an entry being written into the book ---------- */
+.line.writing { grid-template-columns: 58px 184px minmax(0, 1fr) 210px; align-items: start; background: var(--green-wash); border-top: 2px solid var(--ink); border-bottom: 1px solid var(--ink); padding: 16px 0 14px; margin-top: 12px; }
+.line.writing > * { padding-top: 2px; }
+.writing .spans { display: grid; gap: 10px; }
+.writing .fields { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 10px 18px; }
+.writing .choices { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 4px; }
+.writing .l-stamp { align-self: center; }
+.field label, .field .label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.field input[type=text], .field textarea {
+  width: 100%; border: 0; border-bottom: 1.5px solid var(--rule-strong);
+  background: transparent; padding: 4px 0 5px; font-size: 16px;
+}
+.field input[type=text]:focus, .field textarea:focus { outline: none; border-bottom-color: var(--green); }
+.field textarea { resize: vertical; min-height: 44px; font-size: 14px; }
+#d-subject { font-size: 17px; font-weight: 600; }
+.time-field { display: flex; align-items: center; gap: 6px; }
+.time-field input { font-weight: 600; width: 5.2em !important; flex: none; }
+.set-btn { border: 1px solid var(--rule-strong); background: none; padding: 2px 6px; font-size: 11px; font-weight: 700; cursor: pointer; color: var(--ink-2); white-space: nowrap; }
+.set-btn:hover { border-color: var(--ink); color: var(--ink); }
+.seg { display: flex; flex-wrap: wrap; }
+.seg button {
+  border: 1px solid var(--rule-strong); margin-left: -1px; background: var(--paper-raised);
+  padding: 5px 9px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink-2);
+  display: inline-flex; gap: 6px; align-items: center;
+}
+.seg button:first-child { margin-left: 0; }
+.seg button:hover { color: var(--ink); position: relative; border-color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); position: relative; }
+.seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+.seg button kbd { font-size: 10px; padding: 2px 4px; min-width: 1.4em; border-bottom-width: 1px; }
+.seg button[aria-pressed="true"] kbd { background: transparent; color: var(--paper); border-color: rgba(244,245,242,.5); }
+.writing-foot { grid-column: 2 / -1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.writing-note { font-size: 13px; color: var(--muted); }
+.btn {
+  border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
+  padding: 9px 16px; font-weight: 700; font-size: 14px; cursor: pointer;
+  display: inline-flex; gap: 8px; align-items: center;
+}
+.btn:hover { background: #2a3245; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.quiet { background: none; color: var(--ink); border-color: var(--rule-strong); }
+.btn.quiet:hover { border-color: var(--ink); background: none; }
+.btn.green { background: var(--green); border-color: var(--green); }
+.btn.green:hover { background: #264e43; }
+.btn.danger { background: none; color: var(--danger); border-color: rgba(154,43,43,.45); }
+.btn.danger:hover { border-color: var(--danger); background: rgba(154,43,43,.06); }
+.btn kbd { background: transparent; color: inherit; border-color: currentColor; opacity: .8; }
+.err { color: var(--danger); font-size: 13px; font-weight: 600; }
+
+.empty { padding: 44px 0 20px; max-width: 58ch; }
+.empty h2 { margin: 0 0 6px; font-size: 20px; font-weight: 700; }
+.empty p { margin: 0; color: var(--ink-2); }
+
+.session-foot { display: flex; align-items: center; gap: 14px; margin-top: 28px; flex-wrap: wrap; }
+.session-foot p { margin: 0; color: var(--muted); font-size: 13px; }
+
+/* ---------- locked + clerk ---------- */
+.locked { padding: 44px 0; max-width: 60ch; }
+.locked h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 20px; }
+.locked h2 svg { width: 18px; height: 18px; color: var(--muted); }
+.locked p { margin: 0; color: var(--ink-2); }
+.transcript { list-style: none; margin: 14px 0 0; padding: 0; max-width: 82ch; }
+.transcript li { display: grid; grid-template-columns: 70px 64px 1fr; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--rule); cursor: pointer; font-size: 14px; }
+.transcript li:hover { background: rgba(28,34,48,.035); }
+.transcript li.now { background: var(--green-wash); }
+.transcript .who { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); padding-top: 3px; }
+.transcript .who.JOHN { color: var(--green); }
+.transcript .when { color: var(--muted); }
+
+/* ---------- scorecard + extractions ---------- */
+.sc-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1.4fr); gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--rule); align-items: start; }
+.sc-subject { font-size: 17px; font-weight: 600; }
+.sc-ref { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.sc-form { display: grid; gap: 8px; }
+.sc-form select { border: 1px solid var(--rule-strong); background: var(--paper-raised); padding: 6px 8px; font-size: 14px; }
+.logged { font-size: 13px; color: var(--ink-2); padding: 6px 0 0; margin-top: 4px; border-top: 1px dashed var(--rule-strong); }
+.agree { font-size: 13px; font-weight: 600; color: var(--green); }
+
+.runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0 28px; margin-top: 10px; }
+.run { border-top: 2px solid var(--ink); padding-top: 10px; margin-top: 18px; }
+.run h3 { margin: 0 0 4px; font-size: 14px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.run ol { list-style: none; margin: 0; padding: 0; }
+.run li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.run .r-sub { font-size: 14px; font-weight: 600; }
+.run .r-meta { font-size: 12px; color: var(--muted); }
+.run .r-meta button { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.ref-strip { display: flex; flex-wrap: wrap; gap: 10px 26px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.ref-strip .item { display: flex; gap: 10px; align-items: center; font-size: 14px; font-weight: 600; }
+
+/* ---------- inline confirm + toast ---------- */
+.confirm { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--ink); background: var(--paper-raised); }
+.confirm p { margin: 0; font-size: 13px; font-weight: 600; flex-basis: 100%; }
+.toast {
+  position: fixed; left: calc(var(--rail-w) + 40px); bottom: 24px;
+  background: var(--ink); color: var(--paper);
+  padding: 11px 16px; font-size: 14px; font-weight: 600;
+  transform: translateY(12px); opacity: 0; pointer-events: none;
+  transition: transform 260ms var(--ease-out), opacity 260ms var(--ease-out);
+  max-width: 70ch;
+}
+.toast.show { transform: none; opacity: 1; }
+.toast.bad { background: var(--danger); }
+
+.boot { padding: 80px 40px; color: var(--muted); }
+
+@media (max-width: 1100px) {
+  .line { grid-template-columns: 48px 128px minmax(0, 1fr) 170px; gap: 14px; }
+  .line.writing { grid-template-columns: 48px 170px minmax(0, 1fr) 150px; }
+  .writing .fields { grid-template-columns: 1fr; }
+  .sc-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 820px) {
+  :root { --rail-w: 0px; }
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .rail { min-width: 0; position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .sessions { display: flex; overflow-x: auto; }
+  .sessions a { grid-template-columns: auto auto; min-width: 180px; }
+  .rail-foot { display: none; }
+  .next, .caption, .panel { padding-left: 16px; padding-right: 16px; }
+  .bench, .tabs { margin-left: 16px; margin-right: 16px; }
+  .tabs { gap: 8px 18px; flex-wrap: wrap; }
+  .tab { white-space: nowrap; }
+  .sessions a { min-width: 220px; }
+  .s-title { white-space: normal; }
+  .line.writing { grid-template-columns: 44px 1fr; }
+  .line.writing .spans, .line.writing .fields, .writing-foot, .writing .l-stamp { grid-column: 1 / -1; }
+  .line { grid-template-columns: 44px 1fr; }
+  .l-span { grid-column: 2; }
+  .l-body { grid-column: 1 / -1; }
+  .l-stamp { grid-column: 1 / -1; justify-self: start; }
+  .toast { left: 16px; }
+}
+@media (hover: none) { .keys { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .l-no.inking { animation: none; }
+  .stamp.press { animation: none; }
+  .toast { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail" aria-label="Sessions">
+    <div class="rail-head">
+      <p class="rail-title">Pilot Reference Docket</p>
+      <p class="rail-sub" id="rail-sub">Robot or Not? · pilot rulings</p>
+      <div class="tally" id="tally" aria-hidden="true"></div>
+    </div>
+    <ol class="sessions" id="sessions"></ol>
+    <div class="rail-foot" id="rail-foot"></div>
+  </aside>
+  <main id="main">
+    <div class="next" id="next" role="status"></div>
+    <div id="view"><p class="boot">Opening the docket…</p></div>
+  </main>
+</div>
+<audio id="player" preload="auto"></audio>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (sel, root = document) => root.querySelector(sel);
+const player = $("#player");
+const S = {
+  overview: null, n: null, session: null, peaks: null, peaksError: null,
+  draft: null, draftError: null, tab: "entries", activeId: null,
+  loop: false, pressId: null, scorecard: null, extractions: null,
+  confirm: null, lastResumePost: 0,
+};
+
+const VERDICTS = [
+  ["yes", "Yes", "Y"], ["no", "No", "N"], ["ambiguous", "Ambiguous", "A"], ["no_ruling", "No ruling", "0"],
+];
+const STRENGTHS = [
+  ["firm", "Firm", "F"], ["hedged", "Hedged", "H"], ["reversed_during_episode", "Reversed", "R"],
+];
+const SPEAKERS = [["JOHN", "John", "J"], ["JASON", "Jason", "S"], ["GUEST", "Guest", "G"]];
+const STAMP_WORD = Object.fromEntries(VERDICTS.map(([v, label]) => [v, label]));
+const STRENGTH_WORD = Object.fromEntries(STRENGTHS.map(([v, label]) => [v, label.toLowerCase()]));
+const SPEAKER_WORD = Object.fromEntries(SPEAKERS.map(([v, label]) => [v, label]));
+
+const ICON = {
+  play: '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 2.5v13l11-6.5z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 2.5h3.5v13H4zM10.5 2.5H14v13h-3.5z" fill="currentColor"/></svg>',
+  open: '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  closed: '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="6.2" fill="currentColor"/><path d="M5.8 9.2l2.2 2.2 4.2-4.6" fill="none" stroke="#f4f5f2" stroke-width="1.7"/></svg>',
+  sealed: '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 1.8l1.6 1.5 2.2-.3.6 2.1 2 1-.6 2.1.9 2-1.8 1.3-.1 2.2-2.2.2L9 16.2l-1.6-1.3-2.2-.2-.1-2.2L3.3 11l.9-2-.6-2.1 2-1 .6-2.1 2.2.3z" fill="currentColor"/></svg>',
+  lock: '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3.5" y="8" width="11" height="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 8V5.8a3 3 0 016 0V8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
+
+// ---------- helpers ----------
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function tc(s, tenths = true) {
+  if (s == null || isNaN(s)) return "—";
+  const neg = s < 0; s = Math.abs(s);
+  const m = Math.floor(s / 60), sec = s - m * 60;
+  const ss = tenths ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
+  return (neg ? "-" : "") + m + ":" + ss;
+}
+function parseTc(str) {
+  str = String(str).trim();
+  if (!str) return null;
+  const parts = str.split(":").map(Number);
+  if (parts.some(isNaN)) return NaN;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
+function shortTitle(t) { return String(t).replace(/^\d+:\s*/, ""); }
+function kOf(id) { return Number(String(id).split("#").pop()); }
+async function api(path, body) {
+  const opts = body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+  return data;
+}
+let toastTimer;
+function toast(msg, bad = false) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = "toast" + (bad ? " bad" : ""); }, bad ? 5200 : 2400);
+}
+function sealed() { return !!(S.overview && S.overview.sealed); }
+function sessionOpen() { return S.session && S.session.status === "open"; }
+function liveEntries() { return S.session.entries.filter(e => !e.superseded_by); }
+const TILTS = [-1, -1.6, -0.5, -1.3, 0.4, -0.8];  // a hand-pressed stamp is never set twice alike
+function stampHtml(verdict, strength, extra = "", k = 0) {
+  const tilt = `style="--tilt:${TILTS[k % TILTS.length]}deg"`;
+  if (!verdict) return `<span class="stamp blank ${extra}" ${tilt}>Unstamped</span>`;
+  const sub = verdict === "no_ruling" ? "" : `<small>${esc(STRENGTH_WORD[strength] || "")}</small>`;
+  return `<span class="stamp ${esc(verdict)} ${extra}" ${tilt}>${esc(STAMP_WORD[verdict])}${sub}</span>`;
+}
+
+// ---------- loading ----------
+async function loadOverview() {
+  S.overview = await api("/api/overview");
+  renderRail();
+  renderNext();
+}
+async function openSession(n, { keepTab = false } = {}) {
+  const changed = S.n !== n;
+  S.n = n;
+  S.session = await api(`/api/sessions/${n}`);
+  if (changed) {
+    S.draft = null; S.draftError = null; S.activeId = null; S.loop = false;
+    S.scorecard = null; S.extractions = null; S.confirm = null; S.peaks = null; S.peaksError = null;
+    if (!keepTab) S.tab = "entries";
+    if (S.session.audio_available) {
+      player.src = `/audio/${n}`;
+      player.addEventListener("loadedmetadata", () => { player.currentTime = S.session.resume_s || 0; drawStrip(); }, { once: true });
+      api(`/api/sessions/${n}/peaks`).then(p => { S.peaks = p; drawStrip(); }).catch(e => { S.peaksError = e.message; drawStrip(); });
+    } else {
+      player.removeAttribute("src");
+    }
+  }
+  renderRail();
+  renderNext();
+  renderView();
+}
+async function refresh() {
+  const n = S.n;
+  const [overview, session] = await Promise.all([api("/api/overview"), n != null ? api(`/api/sessions/${n}`) : null]);
+  S.overview = overview;
+  if (n != null) S.session = session;
+  renderRail();
+  renderNext();
+  if (n != null) renderView();
+}
+
+// ---------- rail + next ----------
+function renderRail() {
+  const o = S.overview;
+  const closed = o.sessions.filter(s => s.status !== "open").length;
+  $("#tally").innerHTML = o.sessions.map(s => `<span class="${s.status !== "open" ? "done" : ""}"></span>`).join("");
+  $("#rail-sub").textContent = o.sealed
+    ? `Sealed · v${o.reference_version}`
+    : `${closed} of ${o.sessions.length} sessions closed`;
+  $("#sessions").innerHTML = o.sessions.map(s => `
+    <li><a href="#/session/${s.episode}" ${s.episode === S.n ? 'aria-current="page"' : ""}>
+      <span class="s-no">No.&nbsp;${s.episode}</span>
+      <span class="s-title">${esc(shortTitle(s.title))}</span>
+      <span class="s-mark ${s.status}" title="${s.status}">${ICON[s.status]}</span>
+      <span class="s-meta">${tc(s.duration_s, false)} · ${s.entries} ${s.entries === 1 ? "entry" : "entries"}${s.audio_available ? "" : " · no audio"}</span>
+    </a></li>`).join("");
+  const foot = $("#rail-foot");
+  if (o.sealed) {
+    foot.innerHTML = `<p class="seal-note">Sealed ${esc(o.sealed.sealed_at.slice(0, 10))} by ${esc(o.sealed.sealed_by)}. ${o.sealed.rows} entries. Corrections supersede; nothing is edited in place.</p>`;
+  } else if (S.confirm === "seal") {
+    foot.innerHTML = `<div class="confirm"><p>Seal the record at v${esc(o.reference_version)}? Entries become read-only for good.</p>
+      <button class="btn green" data-act="seal-yes">Seal the record</button>
+      <button class="btn quiet" data-act="cancel-confirm">Not yet</button></div>`;
+  } else {
+    const ready = closed === o.sessions.length;
+    foot.innerHTML = `<p class="seal-note">${ready ? "Every session is closed." : "Seal once every session is closed."}</p>
+      <button class="btn ${ready ? "green" : "quiet"}" data-act="seal" ${ready ? "" : "disabled"}>${ICON.sealed.replace("<svg", '<svg width="15" height="15"')} Seal the record</button>`;
+  }
+}
+function renderNext() {
+  const o = S.overview, el = $("#next");
+  if (!o) return;
+  if (o.sealed) {
+    el.innerHTML = `<span class="dot"></span><span><strong>Record sealed at v${esc(o.reference_version)}.</strong> Scorecard disagreements and the extraction review are open.</span>`;
+    return;
+  }
+  const next = o.sessions.find(s => s.status === "open");
+  if (!next) {
+    el.innerHTML = `<span class="dot"></span><span><strong>All sessions closed.</strong> Review any clerk's checks, then seal the record.</span>`;
+    return;
+  }
+  const here = next.episode === S.n;
+  el.innerHTML = `<span class="dot"></span><span>Next: <strong>Session No. ${next.episode}, ${esc(shortTitle(next.title))}</strong> — ${next.resume_s ? `resume at ${tc(next.resume_s, false)}` : "start from the top"}${here ? "" : ` · <a href="#/session/${next.episode}">open it</a>`}</span>`;
+}
+
+// ---------- session view ----------
+function renderView() {
+  const s = S.session, view = $("#view");
+  if (!s) return;
+  const entries = liveEntries();
+  view.innerHTML = `
+    <header class="caption">
+      <h1><span class="inre">In re:</span> ${esc(shortTitle(s.title))}</h1>
+      <p class="meta">
+        <span>Session <b>No. ${s.episode}</b></span>
+        <span>${tc(s.duration_s, false)} of audio</span>
+        <span><b>${entries.length}</b> ${entries.length === 1 ? "entry" : "entries"}</span>
+        <span class="status-word ${s.status}">${s.status}</span>
+      </p>
+    </header>
+    <section class="bench" aria-label="Audio">
+      <div class="transport">
+        <button class="play" id="play" aria-label="${player.paused ? "Play" : "Pause"}">${player.paused ? ICON.play : ICON.pause}</button>
+        <div class="clock" id="clock">0:00.0<small>/ ${tc(s.duration_s, false)}</small></div>
+        <div class="t-group">
+          <button class="t-btn" data-seek="-5" title="Back 5 s">−5s</button>
+          <button class="t-btn" data-seek="5" title="Forward 5 s">+5s</button>
+        </div>
+        <div class="t-group" role="group" aria-label="Speed">
+          ${[1, 1.25, 1.5].map(r => `<button class="t-btn" data-rate="${r}" aria-pressed="${player.playbackRate === r}">${r}×</button>`).join("")}
+        </div>
+        <button class="t-btn" id="loop" aria-pressed="${S.loop}" title="Loop the marked span (L)">Loop span</button>
+        <span class="spacer"></span>
+        ${s.status === "open" && !sealed()
+          ? `<button class="mark-cta" data-act="mark" ${s.audio_available ? "" : "disabled"}>Mark ruling <kbd>[</kbd><kbd>]</kbd></button>` : ""}
+      </div>
+      <div class="strip" id="strip">
+        <canvas id="wave" aria-label="Waveform. Click to seek, drag to mark a span."></canvas>
+        ${s.audio_available ? "" : `<div class="strip-msg">No audio for this episode. Run <kbd>jev-or-not download</kbd>.</div>`}
+      </div>
+      <div class="keys" aria-label="Keyboard">
+        <span><kbd>Space</kbd> play</span>
+        <span><kbd>←</kbd><kbd>→</kbd> 5 s, <kbd>⇧</kbd> 1 s</span>
+        <span><kbd>[</kbd><kbd>]</kbd> mark start / end</span>
+        <span><kbd>Y</kbd><kbd>N</kbd><kbd>A</kbd><kbd>0</kbd> verdict</span>
+        <span><kbd>F</kbd><kbd>H</kbd><kbd>R</kbd> strength</span>
+        <span><kbd>J</kbd><kbd>S</kbd><kbd>G</kbd> speaker</span>
+        <span><kbd>T</kbd> type subject</span>
+        <span><kbd>Enter</kbd> enter it</span>
+        <span><kbd>L</kbd> loop</span>
+        <span><kbd>Esc</kbd> cancel</span>
+      </div>
+    </section>
+    <div class="tabs" role="tablist">
+      ${tab("entries", `Entries <span class="count">${entries.length}</span>`, false)}
+      ${tab("clerk", "Clerk’s check", !s.transcript)}
+      ${tab("scorecard", "Scorecard", !sealed())}
+      ${tab("extractions", "Extractions", !sealed())}
+    </div>
+    <section class="panel" id="panel" role="tabpanel"></section>`;
+  syncTransport();
+  renderPanel();
+  requestAnimationFrame(drawStrip);
+}
+function tab(id, label, locked) {
+  return `<button class="tab" role="tab" data-tab="${id}" aria-selected="${S.tab === id}">${locked ? ICON.lock : ""}${label}</button>`;
+}
+function renderPanel(stampFlash = false) {
+  const p = $("#panel");
+  if (!p) return;
+  if (S.tab === "entries") p.innerHTML = entriesHtml(stampFlash);
+  else if (S.tab === "clerk") p.innerHTML = clerkHtml();
+  else if (S.tab === "scorecard") p.innerHTML = scorecardHtml();
+  else p.innerHTML = extractionsHtml();
+  const f = p.querySelector("[data-autofocus]");
+  if (f && document.activeElement === document.body) f.focus();
+  highlightTranscript();
+}
+
+function entriesHtml(stampFlash) {
+  const s = S.session;
+  const lines = (S.draft && S.draft.mode === "new" ? draftHtml(stampFlash) : "") +
+    s.entries.map(e => (S.draft && S.draft.mode !== "new" && S.draft.ruling_id === e.ruling_id) ? draftHtml(stampFlash) + (S.draft.mode === "supersede" ? lineHtml(e) : "") : lineHtml(e)).join("");
+  let body;
+  if (!s.entries.length && !S.draft) {
+    body = s.status === "open" && !sealed()
+      ? `<div class="empty"><h2>No entries yet</h2><p>Play the episode and press <kbd>[</kbd> when John starts his final ruling and <kbd>]</kbd> when he finishes, or drag across the strip. Then key the verdict.</p></div>`
+      : `<div class="empty"><h2>No rulings in this session</h2><p>${s.no_rulings ? "Closed with no rulings, confirmed." : "Nothing was entered."}</p></div>`;
+  } else {
+    body = `<ol class="docket">${lines}</ol>`;
+  }
+  return body + sessionFootHtml();
+}
+function lineHtml(e) {
+  const canEdit = sessionOpen() && !sealed();
+  const canCorrect = sealed() && !e.superseded_by;
+  const cls = ["line", canEdit || canCorrect ? "clickable" : "", e.ruling_id === S.activeId ? "active" : "", e.superseded_by ? "superseded" : ""].join(" ");
+  const speaker = SPEAKER_WORD[e.speaker] || SPEAKER_WORD.GUEST;
+  return `<li class="${cls}" data-id="${esc(e.ruling_id)}" ${canEdit || canCorrect ? 'tabindex="0"' : ""}>
+    <div class="l-no ${e.ruling_id === S.pressId ? "inking" : ""}">#${kOf(e.ruling_id)}</div>
+    <div class="l-span"><button data-seekto="${e.ruling_start_s}" title="Play from here">${tc(e.ruling_start_s)} – ${tc(e.ruling_end_s)}</button></div>
+    <div class="l-body"><div class="l-subject">${esc(e.subject)}</div>
+      <div class="l-sub">${esc(e.category)} · ruled by ${speaker}${e.reference_version !== "1.0.0" ? ` · v${esc(e.reference_version)}` : ""}${e.superseded_by ? ` · superseded by #${kOf(e.superseded_by)}` : ""}${canCorrect ? " · click to correct" : ""}</div></div>
+    <div class="l-stamp">${stampHtml(e.verdict, e.verdict_strength, e.ruling_id === S.pressId ? "press" : "", kOf(e.ruling_id))}</div>
+  </li>`;
+}
+function draftHtml(stampFlash) {
+  const d = S.draft;
+  const k = d.mode === "edit" ? kOf(d.ruling_id) : S.session.next_k;
+  const note = d.mode === "supersede"
+    ? `Correcting sealed #${kOf(d.ruling_id)}: enters #${k} and bumps the reference version.`
+    : d.mode === "edit" ? `Amending #${k}.` : "Key verdict, strength and speaker; T names the subject; Enter enters it.";
+  const seg = (name, label, opts, val, disabled = false) => `<div class="field"><span class="label">${label}</span><div class="seg" role="group" aria-label="${label}">${opts.map(([v, text, key]) =>
+    `<button type="button" data-set="${name}" data-val="${v}" aria-pressed="${val === v}" ${disabled ? "disabled" : ""}>${text} <kbd>${key}</kbd></button>`).join("")}</div></div>`;
+  return `<li class="line writing" id="draft" aria-label="Entry being written">
+    <div class="l-no pending">#${k}</div>
+    <div class="spans">
+      <div class="field"><label for="d-start">From</label>
+        <div class="time-field"><input type="text" id="d-start" value="${d.ruling_start_s == null ? "" : tc(d.ruling_start_s)}" placeholder="m:ss.s"><button class="set-btn" data-act="set-start" type="button">playhead <kbd>[</kbd></button></div></div>
+      <div class="field"><label for="d-end">To</label>
+        <div class="time-field"><input type="text" id="d-end" value="${d.ruling_end_s == null ? "" : tc(d.ruling_end_s)}" placeholder="m:ss.s"><button class="set-btn" data-act="set-end" type="button">playhead <kbd>]</kbd></button></div></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label for="d-subject">Subject judged</label>
+        <input type="text" id="d-subject" value="${esc(d.subject)}" placeholder="e.g. Johnny Cab (T)" autocomplete="off"></div>
+      <div class="field"><label for="d-category">Against</label>
+        <input type="text" id="d-category" value="${esc(d.category)}" placeholder="robot" autocomplete="off"></div>
+      <div class="choices">
+        ${seg("verdict", "Verdict", VERDICTS, d.verdict)}
+        ${seg("verdict_strength", "Strength", STRENGTHS, d.verdict_strength, d.verdict === "no_ruling")}
+        ${seg("speaker", "Ruled by", SPEAKERS, d.speaker)}
+      </div>
+      ${d.mode === "supersede" ? `<div class="field" style="grid-column:1/-1"><label for="d-reason">Why the correction</label><textarea id="d-reason" placeholder="e.g. re-listened: John reverses at 4:10">${esc(d.reason || "")}</textarea></div>` : ""}
+    </div>
+    <div class="l-stamp">${stampHtml(d.verdict, d.verdict_strength, stampFlash ? "press" : "", k)}</div>
+    <div class="writing-foot">
+      <button class="btn" data-act="save">${d.mode === "supersede" ? "Enter correction" : d.mode === "edit" ? "Save amendment" : "Enter ruling"} <kbd>↵</kbd></button>
+      <button class="btn quiet" data-act="cancel">Cancel <kbd>Esc</kbd></button>
+      ${d.mode === "edit" ? `<button class="btn danger" data-act="delete">Strike entry</button>` : ""}
+      ${S.draftError ? `<span class="err" role="alert">${esc(S.draftError)}</span>` : `<span class="writing-note">${note}</span>`}
+    </div>
+  </li>`;
+}
+function sessionFootHtml() {
+  const s = S.session;
+  if (sealed()) return "";
+  if (s.status === "closed") {
+    return `<div class="session-foot"><button class="btn quiet" data-act="reopen">Reopen session</button>
+      <p>Closed. The clerk’s transcript is unlocked for checking spans.</p></div>`;
+  }
+  if (S.confirm === "close-empty") {
+    return `<div class="session-foot"><div class="confirm"><p>Close with no rulings? This records that John gives no ruling anywhere in this episode.</p>
+      <button class="btn" data-act="close-empty-yes">Close with no rulings</button>
+      <button class="btn quiet" data-act="cancel-confirm">Keep listening</button></div></div>`;
+  }
+  return `<div class="session-foot"><button class="btn green" data-act="close" ${S.draft ? "disabled" : ""}>Close session</button>
+    <p>${S.draft ? "Enter or cancel the open entry first." : "Close once every ruling is entered. Closing unlocks the clerk’s transcript."}</p></div>`;
+}
+function clerkHtml() {
+  const s = S.session;
+  if (!s.transcript) {
+    return `<div class="locked"><h2>${ICON.lock} Held until the session is closed</h2>
+      <p>Listen first. The clerk’s transcript (candidate B) stays sealed while the session is open so the text can’t steer the reference. Close the session to check your spans against it.</p></div>`;
+  }
+  return `<p style="color:var(--muted);font-size:13px;margin:14px 0 0">Candidate B transcript with enrolled speakers. Click a line to play from it.</p>
+    <ol class="transcript" id="transcript">${s.transcript.map(t =>
+      `<li data-seekto="${t.start}" data-start="${t.start}" data-end="${t.end}"><span class="when">${tc(t.start, false)}</span><span class="who ${esc(t.speaker)}">${esc(t.speaker)}</span><span>${esc(t.text)}</span></li>`).join("")}</ol>`;
+}
+function scorecardHtml() {
+  if (!sealed()) return lockedAfterSeal("Scorecard comparison", "The fan scorecard stays hidden until the record is sealed, so it can’t influence a single entry.");
+  if (!S.scorecard) { loadScorecard(); return `<p class="boot">Loading scorecard…</p>`; }
+  const entries = liveEntries();
+  const rows = S.scorecard.rulings;
+  if (!rows.length) return `<div class="empty"><h2>No scorecard rulings</h2><p>The scorecard has nothing for this episode. Your ${entries.length} ${entries.length === 1 ? "entry stands" : "entries stand"} alone.</p></div>`;
+  const labelVerdict = { yes: "yes", no: "no", unresolved: "ambiguous" };
+  return rows.map(r => {
+    const logged = S.scorecard.disagreements.filter(d => r.source_row_ids.includes(d.source_row_id));
+    return `<div class="sc-row" data-ref="${esc(r.ruling_ref)}">
+      <div><div class="sc-subject">${esc(r.subject)}</div><div class="sc-ref">${esc(r.ruling_ref)}${r.review_status !== "auto" ? ` · ${esc(r.review_status)}` : ""}</div></div>
+      <div>${stampHtml(labelVerdict[r.label] || "ambiguous", null, "small-stamp")}</div>
+      <div class="sc-form">
+        <select aria-label="Matching entry">
+          <option value="">No matching entry (you heard no ruling)</option>
+          ${entries.map(e => `<option value="${esc(e.ruling_id)}">#${kOf(e.ruling_id)} ${esc(e.subject)} (${esc(STAMP_WORD[e.verdict])})</option>`).join("")}
+        </select>
+        <input type="text" class="sc-reason" placeholder="Which side is right, and why" style="border:0;border-bottom:1.5px solid var(--rule-strong);background:transparent;padding:5px 0">
+        <div><button class="btn quiet" data-act="log-disagreement">Log disagreement</button></div>
+        ${logged.map(d => `<div class="logged">Logged ${esc(d.decided_at.slice(0, 10))}: scorecard <b>${esc(d.old)}</b> vs entry <b>${esc(d.new)}</b>${d.evidence ? ` (#${kOf(d.evidence)})` : ""}. ${esc(d.reason)}</div>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+}
+function extractionsHtml() {
+  if (!sealed()) return lockedAfterSeal("Extraction review", "Model extractions stay hidden until the record is sealed. After that you can compare every run against your entries here.");
+  if (!S.extractions) { loadExtractions(); return `<p class="boot">Loading extraction runs…</p>`; }
+  const entries = liveEntries();
+  const runs =Object.entries(S.extractions.runs);
+  const ref = `<div class="ref-strip"><span style="font-size:14px;color:var(--muted);align-self:center">Your record:</span>${entries.length
+    ? entries.map(e => `<span class="item">#${kOf(e.ruling_id)} ${esc(e.subject)} ${stampHtml(e.verdict, e.verdict_strength, "small-stamp")}</span>`).join("")
+    : `<span class="item" style="color:var(--muted)">No rulings</span>`}</div>`;
+  if (!runs.length) return ref + `<div class="empty"><h2>No extraction runs yet</h2><p>Run <kbd>jev-or-not extract ingest</kbd> for this episode.</p></div>`;
+  return ref + `<div class="runs">${runs.map(([name, rulings]) => `<div class="run"><h3>${esc(name)}</h3>
+    ${rulings.length ? `<ol>${rulings.map(r => `<li><div><div class="r-sub">${esc(r.subject)}</div>
+      <div class="r-meta">${esc(r.category)} · confidence ${Number(r.confidence).toFixed(2)}${r.quotes.length ? ` · quotes at ${r.quotes.map(q => `<button data-seekto="${q.start_s}">${tc(q.start_s, false)}</button>`).join(", ")}` : ""}</div></div>
+      ${stampHtml(r.verdict, r.verdict_strength, "small-stamp")}</li>`).join("")}</ol>` : `<p class="r-meta">No rulings extracted.</p>`}
+  </div>`).join("")}</div>`;
+}
+function lockedAfterSeal(title, text) {
+  return `<div class="locked"><h2>${ICON.lock} ${title} opens after the seal</h2><p>${text}</p></div>`;
+}
+async function loadScorecard() {
+  try { S.scorecard = await api(`/api/sessions/${S.n}/scorecard`); } catch (e) { toast(e.message, true); return; }
+  renderPanel();
+}
+async function loadExtractions() {
+  try { S.extractions = await api(`/api/sessions/${S.n}/extractions`); } catch (e) { toast(e.message, true); return; }
+  renderPanel();
+}
+
+// ---------- waveform strip ----------
+const strip = { dragFrom: null, dragging: false };
+// The ledger, entry spans and peaks only change with size, data or selection, so they are
+// painted once into two offscreen layers (peaks unplayed / played); each frame blits them
+// split at the playhead and draws only the draft span and playhead on top.
+const stripCache = { key: null, idle: null, played: null, epoch: 0 };
+function stripDuration() { return (S.peaks && S.peaks.duration_s) || player.duration || S.session.duration_s; }
+function paintStripStatic(layer, w, h, dpr, dur, peakAlpha) {
+  const ctx = layer.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const x = t => (t / dur) * w;
+  const top = 22, base = h - 20, mid = (top + base) / 2, amp = (base - top) / 2;
+
+  // ledger rules
+  ctx.fillStyle = "#d6dad3";
+  ctx.fillRect(0, mid, w, 1);
+  ctx.fillRect(0, base + 0.5, w, 1);
+  ctx.font = "600 10px Public Sans, system-ui, sans-serif";
+  ctx.textBaseline = "top";
+  const stepS = dur > 480 ? 60 : dur > 180 ? 30 : 15;
+  for (let t = 0; t <= dur; t += stepS) {
+    const px = Math.round(x(t)) + 0.5;
+    ctx.fillStyle = t % 60 === 0 ? "#b3bab1" : "#d6dad3";
+    ctx.fillRect(px, base, 1, t % 60 === 0 ? 7 : 4);
+    const labelEvery = w < 500 ? 60 : stepS;
+    if (t % labelEvery === 0) {
+      ctx.fillStyle = "#5d6573";
+      ctx.fillText(tc(t, false), Math.min(px + 3, w - 30), base + 6);
+    }
+  }
+
+  // entry spans: color only on the hairline edges, labeled by number
+  for (const e of liveEntries()) {
+    const a = x(e.ruling_start_s), b = x(e.ruling_end_s);
+    ctx.fillStyle = e.ruling_id === S.activeId ? "rgba(47,93,80,0.16)" : "rgba(47,93,80,0.07)";
+    ctx.fillRect(a, top, Math.max(2, b - a), base - top);
+    ctx.fillStyle = "rgba(47,93,80,0.75)";
+    ctx.fillRect(a, top - 4, 1.5, base - top + 4);
+    ctx.fillRect(b - 1.5, top - 4, 1.5, base - top + 4);
+    ctx.fillStyle = "#2f5d50";
+    ctx.font = "800 11px Public Sans, system-ui, sans-serif";
+    ctx.fillText("#" + kOf(e.ruling_id), a + 4, 5);
+  }
+
+  // peaks: one 1.2px bar every 2px
+  if (S.peaks) {
+    const pk = S.peaks.peaks, n = pk.length;
+    ctx.fillStyle = "#1c2230";
+    ctx.globalAlpha = peakAlpha;
+    for (let px = 0; px < w; px += 2) {
+      const i0 = Math.floor((px / w) * n), i1 = Math.max(i0 + 1, Math.floor(((px + 2) / w) * n));
+      let m = 0;
+      for (let i = i0; i < i1 && i < n; i++) if (pk[i] > m) m = pk[i];
+      const hh = Math.max(1, Math.pow(m, 0.7) * amp);
+      ctx.fillRect(px, mid - hh, 1.2, hh * 2);
+    }
+    ctx.globalAlpha = 1;
+  } else if (S.session.audio_available) {
+    ctx.fillStyle = "#5d6573";
+    ctx.font = "500 12px Public Sans, system-ui, sans-serif";
+    ctx.fillText(S.peaksError ? "Waveform unavailable: " + S.peaksError : "Drawing waveform…", 8, mid - 6);
+  }
+}
+function stripLayers(canvas, w, h, dpr, dur) {
+  const key = [canvas.width, canvas.height, w, h, dpr, dur, S.session, S.peaks, S.peaksError, S.activeId, stripCache.epoch];
+  if (stripCache.key && key.every((v, i) => v === stripCache.key[i])) return stripCache;
+  const layer = alpha => {
+    const c = document.createElement("canvas");
+    c.width = canvas.width; c.height = canvas.height;
+    paintStripStatic(c, w, h, dpr, dur, alpha);
+    return c;
+  };
+  stripCache.idle = layer(0.42);
+  stripCache.played = S.peaks ? layer(0.9) : null;
+  stripCache.key = key;
+  return stripCache;
+}
+function drawStrip() {
+  const canvas = $("#wave");
+  if (!canvas || !S.session) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w) return;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext("2d");
+  const dur = stripDuration() || 1;
+  const x = t => (t / dur) * w;
+  const top = 22, base = h - 20;
+  const layers = stripLayers(canvas, w, h, dpr, dur);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(layers.idle, 0, 0);
+  // progress tint: peak bars at px <= playhead come from the played layer; cut in the gap after the last one
+  const xNow = x(player.currentTime);
+  if (layers.played && xNow >= 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, Math.floor(dpr * (Math.floor(xNow / 2) * 2 + 2)), canvas.height);
+    ctx.clip();
+    ctx.drawImage(layers.played, 0, 0);
+    ctx.restore();
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.textBaseline = "top";
+
+  // draft span
+  const d = S.draft;
+  if (d && d.ruling_start_s != null) {
+    const a = x(d.ruling_start_s), b = d.ruling_end_s != null ? x(d.ruling_end_s) : xNow;
+    ctx.strokeStyle = "#1c2230";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(Math.min(a, b), top - 6, Math.abs(b - a) || 2, base - top + 6);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#1c2230";
+    ctx.font = "800 11px Public Sans, system-ui, sans-serif";
+    ctx.fillText(d.mode === "new" ? "new" : "#" + kOf(d.ruling_id), Math.min(a, b) + 4, 5);
+  }
+
+  // playhead
+  const ph = Math.round(x(player.currentTime || 0)) + 0.5;
+  ctx.fillStyle = "#1c2230";
+  ctx.fillRect(ph - 0.5, 0, 1.5, base);
+  ctx.beginPath(); ctx.moveTo(ph - 5, 0); ctx.lineTo(ph + 5.5, 0); ctx.lineTo(ph + 0.25, 7); ctx.fill();
+}
+function stripTime(ev) {
+  const r = $("#wave").getBoundingClientRect();
+  const dur = stripDuration();
+  return Math.max(0, Math.min(dur, ((ev.clientX - r.left) / r.width) * dur));
+}
+
+// ---------- transport ----------
+function syncPlayButton() {
+  const btn = $("#play");
+  if (btn) { btn.innerHTML = player.paused ? ICON.play : ICON.pause; btn.setAttribute("aria-label", player.paused ? "Play" : "Pause"); }
+}
+function syncTransport() {
+  // #clock is "<time text><small>/ duration</small>"; only the leading text node changes
+  const clock = $("#clock");
+  if (!clock || !S.session) return;
+  const now = tc(player.currentTime || 0);
+  if (clock.firstChild.data !== now) clock.firstChild.data = now;
+}
+function togglePlay() {
+  if (!player.src) return;
+  if (player.paused) player.play().catch(e => toast("Can’t play: " + e.message, true)); else player.pause();
+}
+function seekBy(d) { if (player.src) player.currentTime = Math.max(0, player.currentTime + d); drawStrip(); syncTransport(); }
+function seekTo(t, play = true) { if (!player.src) return; player.currentTime = t; if (play) player.play().catch(() => {}); drawStrip(); syncTransport(); }
+let raf;
+function tick() {
+  syncTransport();
+  drawStrip();
+  const d = S.draft, span = d && d.ruling_start_s != null && d.ruling_end_s != null ? d : S.session && S.session.entries.find(e => e.ruling_id === S.activeId);
+  if (S.loop && span && player.currentTime >= span.ruling_end_s) player.currentTime = span.ruling_start_s;
+  highlightTranscript();
+  if (!player.paused) raf = requestAnimationFrame(tick);
+}
+player.addEventListener("play", () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); syncPlayButton(); syncTransport(); });
+player.addEventListener("pause", () => { syncPlayButton(); syncTransport(); postResume(true); });
+player.addEventListener("timeupdate", () => { if (player.paused) { syncTransport(); drawStrip(); } postResume(false); });
+function postResume(force, beacon = false) {
+  if (S.n == null || !player.src) return;
+  const now = Date.now();
+  if (!force && now - S.lastResumePost < 5000) return;
+  S.lastResumePost = now;
+  const url = `/api/sessions/${S.n}/resume`, body = { position_s: player.currentTime || 0 };
+  // a fetch can be cut off by unload; a beacon is queued to outlive the page
+  if (beacon) navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }));
+  else api(url, body).catch(() => {});
+}
+// transcript highlight: segment times are parsed once per rendered list, and classes
+// are touched only when the set of segments under the playhead changes
+const nowSegs = { list: null, spans: [], on: [] };
+function highlightTranscript() {
+  const list = $("#transcript");
+  if (!list) return;
+  if (nowSegs.list !== list) {
+    nowSegs.list = list; nowSegs.on = [];
+    nowSegs.spans = Array.from(list.children, li => [Number(li.dataset.start), Number(li.dataset.end)]);
+  }
+  const t = player.currentTime, on = [];
+  nowSegs.spans.forEach(([a, b], i) => { if (t >= a && t < b) on.push(i); });
+  if (on.length === nowSegs.on.length && on.every((v, i) => v === nowSegs.on[i])) return;
+  for (const i of nowSegs.on) list.children[i].classList.remove("now");
+  for (const i of on) list.children[i].classList.add("now");
+  nowSegs.on = on;
+}
+
+// ---------- draft ----------
+function canMark() { return S.session && S.session.audio_available && sessionOpen() && !sealed(); }
+// marking a span: a fresh or amended entry, or a post-seal correction already in progress
+function canSetSpan() { return canMark() || (S.draft && S.draft.mode === "supersede"); }
+function newDraft(fields = {}) {
+  S.draft = { mode: "new", ruling_id: null, ruling_start_s: null, ruling_end_s: null, subject: "", category: "robot", speaker: "JOHN", verdict: null, verdict_strength: null, ...fields };
+  S.draftError = null; S.tab = "entries"; S.activeId = null;
+}
+function editDraft(e, mode) {
+  S.draft = { mode, ruling_id: e.ruling_id, ruling_start_s: e.ruling_start_s, ruling_end_s: e.ruling_end_s, subject: e.subject, category: e.category, speaker: e.speaker, verdict: e.verdict, verdict_strength: e.verdict_strength, reason: "" };
+  S.draftError = null; S.activeId = e.ruling_id; S.tab = "entries";
+}
+function readDraftInputs() {
+  const d = S.draft;
+  if (!d || !$("#draft")) return true;
+  d.subject = $("#d-subject").value;
+  d.category = $("#d-category").value;
+  if ($("#d-reason")) d.reason = $("#d-reason").value;
+  for (const [key, id] of [["ruling_start_s", "#d-start"], ["ruling_end_s", "#d-end"]]) {
+    const v = parseTc($(id).value);
+    if (Number.isNaN(v)) { S.draftError = `Can’t read ${key === "ruling_start_s" ? "start" : "end"} time; use m:ss.s`; return false; }
+    d[key] = v;
+  }
+  return true;
+}
+function rerenderDraft(stampFlash = false) { renderPanel(stampFlash); drawStrip(); }
+function markAt(which) {
+  if (!canSetSpan()) return;
+  const t = Math.round(player.currentTime * 10) / 10;
+  if (!S.draft) newDraft();
+  else readDraftInputs();
+  if (which === "start") {
+    S.draft.ruling_start_s = t;
+    if (S.draft.ruling_end_s != null && S.draft.ruling_end_s <= t) S.draft.ruling_end_s = null;
+  } else {
+    S.draft.ruling_end_s = t;
+    if (S.draft.ruling_start_s == null || S.draft.ruling_start_s >= t) S.draft.ruling_start_s = Math.max(0, Math.round((t - 5) * 10) / 10);
+  }
+  rerenderDraft();
+}
+async function saveDraft() {
+  if (!readDraftInputs()) { rerenderDraft(); return; }
+  const d = S.draft;
+  const fail = msg => { S.draftError = msg; rerenderDraft(); };
+  if (d.ruling_start_s == null || d.ruling_end_s == null) { fail("Mark both the start and the end of the ruling."); return; }
+  if (!d.verdict) { fail("Stamp a verdict: Y, N, A, or 0."); return; }
+  if (d.verdict !== "no_ruling" && !d.verdict_strength) { fail("Pick a strength: F, H, or R."); return; }
+  if (!d.subject.trim()) { fail("Name the subject being judged."); $("#d-subject").focus(); return; }
+  const body = { ruling_id: d.ruling_id, subject: d.subject, category: d.category, speaker: d.speaker, verdict: d.verdict, verdict_strength: d.verdict === "no_ruling" ? null : d.verdict_strength, ruling_start_s: d.ruling_start_s, ruling_end_s: d.ruling_end_s };
+  try {
+    let saved;
+    if (d.mode === "supersede") saved = await api(`/api/sessions/${S.n}/supersede`, { ...body, reason: d.reason });
+    else saved = await api(`/api/sessions/${S.n}/entries`, d.mode === "new" ? { ...body, ruling_id: undefined } : body);
+    S.draft = null; S.draftError = null; S.pressId = saved.ruling_id; S.activeId = saved.ruling_id;
+    toast(d.mode === "supersede" ? `Entered #${kOf(saved.ruling_id)}, superseding #${kOf(d.ruling_id)} (v${saved.reference_version})` : `Entry #${kOf(saved.ruling_id)} entered`);
+    await refresh();
+    setTimeout(() => { S.pressId = null; }, 600);
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+  } catch (e) {
+    S.draftError = e.message; rerenderDraft();
+  }
+}
+function cancelDraft() { S.draft = null; S.draftError = null; setLoop(false); renderPanel(); drawStrip(); }
+function setLoop(on) { S.loop = on; const l = $("#loop"); if (l) l.setAttribute("aria-pressed", String(on)); }
+function setChoice(name, val) {
+  if (!S.draft) return;
+  readDraftInputs();
+  S.draft[name] = val;
+  if (name === "verdict" && val === "no_ruling") S.draft.verdict_strength = null;
+  if (name === "verdict" && val !== "no_ruling" && !S.draft.verdict_strength) S.draft.verdict_strength = "firm";
+  S.draftError = null;
+  rerenderDraft(name === "verdict");
+}
+
+// ---------- events ----------
+document.addEventListener("click", async ev => {
+  const t = ev.target.closest("button, [data-seekto], .line.clickable, a");
+  if (!t) return;
+  if (t.dataset.tab) {
+    if (S.draft && t.dataset.tab !== "entries") readDraftInputs();
+    S.tab = t.dataset.tab; renderView(); return;
+  }
+  if (t.dataset.seek) { seekBy(Number(t.dataset.seek)); return; }
+  if (t.dataset.rate) { player.playbackRate = Number(t.dataset.rate); document.querySelectorAll("[data-rate]").forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.rate) === player.playbackRate))); return; }
+  if (t.dataset.set) { setChoice(t.dataset.set, t.dataset.val); return; }
+  if (t.dataset.seekto !== undefined) {
+    ev.stopPropagation(); seekTo(Number(t.dataset.seekto)); return;
+  }
+  if (t.id === "play") { togglePlay(); return; }
+  if (t.id === "loop") { setLoop(!S.loop); return; }
+  if (t.classList.contains("line")) { selectLine(t.dataset.id); return; }
+  const act = t.dataset.act;
+  if (!act) return;
+  try {
+    if (act === "mark") { if (!S.draft) newDraft({ ruling_start_s: Math.round(player.currentTime * 10) / 10 }); rerenderDraft(); }
+    else if (act === "set-start") markAt("start");
+    else if (act === "set-end") markAt("end");
+    else if (act === "save") await saveDraft();
+    else if (act === "cancel") cancelDraft();
+    else if (act === "delete") {
+      if (!window.confirm(`Strike entry #${kOf(S.draft.ruling_id)}? Its number will be retired.`)) return;
+      await api(`/api/sessions/${S.n}/entries/delete`, { ruling_id: S.draft.ruling_id });
+      toast(`Entry #${kOf(S.draft.ruling_id)} struck; the number is retired`);
+      S.draft = null; S.activeId = null; await refresh();
+    }
+    else if (act === "close") {
+      const has = S.session.entries.length > 0;
+      if (!has) { S.confirm = "close-empty"; renderPanel(); return; }
+      await api(`/api/sessions/${S.n}/close`, {}); S.tab = "clerk"; toast(`Session No. ${S.n} closed`); await refresh();
+    }
+    else if (act === "close-empty-yes") { await api(`/api/sessions/${S.n}/close`, { no_rulings: true }); S.confirm = null; toast(`Session No. ${S.n} closed with no rulings`); await refresh(); }
+    else if (act === "reopen") { await api(`/api/sessions/${S.n}/reopen`, {}); toast(`Session No. ${S.n} reopened`); await refresh(); }
+    else if (act === "cancel-confirm") { S.confirm = null; renderRail(); renderPanel(); }
+    else if (act === "seal") { S.confirm = "seal"; renderRail(); }
+    else if (act === "seal-yes") { const seal = await api("/api/seal", {}); S.confirm = null; toast(`Record sealed at v${seal.reference_version}: ${seal.rows} entries`); await refresh(); }
+    else if (act === "log-disagreement") {
+      const row = t.closest(".sc-row");
+      await api(`/api/sessions/${S.n}/disagreements`, { ruling_ref: row.dataset.ref, ruling_id: row.querySelector("select").value || null, reason: row.querySelector(".sc-reason").value });
+      toast("Disagreement logged to adjudication"); S.scorecard = null; renderPanel();
+    }
+  } catch (e) { toast(e.message, true); }
+});
+function selectLine(id) {
+  const e = S.session.entries.find(x => x.ruling_id === id);
+  if (!e) return;
+  if (sealed()) { if (!e.superseded_by) editDraft(e, "supersede"); }
+  else if (sessionOpen()) editDraft(e, "edit");
+  else { S.activeId = id; }
+  seekTo(e.ruling_start_s, false);
+  renderPanel(); drawStrip();
+}
+document.addEventListener("keydown", ev => {
+  const el = ev.target instanceof Element ? ev.target : document.body;
+  const typing = el.matches("input, textarea, select");
+  if (ev.key === "Escape") {
+    if (typing) { el.blur(); return; }
+    if (S.confirm) { S.confirm = null; renderRail(); renderPanel(); return; }
+    if (S.draft) cancelDraft();
+    return;
+  }
+  if (ev.key === "Enter" && S.draft && (typing ? el.matches("input") : true) && !el.matches("button")) {
+    ev.preventDefault(); saveDraft(); return;
+  }
+  if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (el.matches(".line") && ev.key === "Enter") { selectLine(el.dataset.id); return; }
+  const k = ev.key;
+  if (k === " ") { ev.preventDefault(); togglePlay(); return; }
+  if (k === "ArrowLeft" || k === "ArrowRight") { ev.preventDefault(); seekBy((k === "ArrowLeft" ? -1 : 1) * (ev.shiftKey ? 1 : 5)); return; }
+  if (k === "[") { ev.preventDefault(); markAt("start"); return; }
+  if (k === "]") { ev.preventDefault(); markAt("end"); return; }
+  if (k === "l" || k === "L") { setLoop(!S.loop); toast(S.loop ? "Looping the span" : "Loop off"); return; }
+  if (!S.draft) return;
+  const lower = k.toLowerCase();
+  if (lower === "t") { ev.preventDefault(); const f = $("#d-subject"); if (f) { f.focus(); f.select(); } return; }
+  const v = VERDICTS.find(x => x[2].toLowerCase() === lower);
+  if (v) { setChoice("verdict", v[0]); return; }
+  const st = STRENGTHS.find(x => x[2].toLowerCase() === lower);
+  if (st && S.draft.verdict !== "no_ruling") { setChoice("verdict_strength", st[0]); return; }
+  const sp = SPEAKERS.find(x => x[2].toLowerCase() === lower);
+  if (sp) { setChoice("speaker", sp[0]); return; }
+});
+document.addEventListener("pointerdown", ev => {
+  const c = ev.target.closest("#wave");
+  if (!c || !player.src) return;
+  strip.dragFrom = stripTime(ev); strip.dragging = false;
+  c.setPointerCapture(ev.pointerId);
+});
+document.addEventListener("pointermove", ev => {
+  if (strip.dragFrom == null) return;
+  const t = stripTime(ev);
+  if (!strip.dragging && Math.abs(t - strip.dragFrom) > 0.6 && canSetSpan()) {
+    strip.dragging = true;
+    if (!S.draft) newDraft(); else readDraftInputs();
+  }
+  if (strip.dragging) {
+    const a = Math.min(strip.dragFrom, t), b = Math.max(strip.dragFrom, t);
+    S.draft.ruling_start_s = Math.round(a * 10) / 10; S.draft.ruling_end_s = Math.round(b * 10) / 10;
+    drawStrip();
+  }
+});
+document.addEventListener("pointerup", ev => {
+  if (strip.dragFrom == null) return;
+  if (strip.dragging) { player.currentTime = S.draft.ruling_start_s; rerenderDraft(); }
+  else seekTo(stripTime(ev), false);
+  strip.dragFrom = null; strip.dragging = false;
+});
+window.addEventListener("resize", () => drawStrip());
+window.addEventListener("hashchange", route);
+window.addEventListener("beforeunload", () => postResume(true, true));
+
+async function route() {
+  const m = location.hash.match(/^#\/session\/(\d+)/);
+  const o = S.overview;
+  let n = m ? Number(m[1]) : null;
+  if (n == null || !o.sessions.some(s => s.episode === n)) {
+    const next = o.sessions.find(s => s.status === "open") || o.sessions[0];
+    n = next.episode;
+    history.replaceState(null, "", `#/session/${n}`);
+  }
+  if (S.draft && n !== S.n && !confirmLeaveDraft()) { history.replaceState(null, "", `#/session/${S.n}`); return; }
+  if (!player.paused) player.pause();
+  try { await openSession(n); } catch (e) { toast(e.message, true); }
+}
+function confirmLeaveDraft() { return window.confirm("Discard the entry you’re drafting?"); }
+
+(async function boot() {
+  document.fonts.ready.then(() => { stripCache.epoch++; drawStrip(); });  // canvas labels use the vendored face too
+  try { await loadOverview(); await route(); }
+  catch (e) { $("#view").innerHTML = `<p class="boot">Couldn’t open the docket: ${esc(e.message)}</p>`; }
+})();
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@ PLAN*.md
 .review-pr-ignored-*
 .impeccable/
 .fallow/
+.playwright-mcp/
 agent-review-summary.md
 
 .env

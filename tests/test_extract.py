@@ -289,8 +289,8 @@ def test_index_rows_falls_back_per_candidate(tmp_path):
         + "\n"
     )
 
-    assert [r["path"] for r in extract_module._index_rows("A", enrolled, transcripts)] == ["a.json"]
-    assert [r["path"] for r in extract_module._index_rows("B", enrolled, transcripts)] == ["b.json"]
+    assert [r["path"] for r in extract_module.index_rows("A", enrolled, transcripts)] == ["a.json"]
+    assert [r["path"] for r in extract_module.index_rows("B", enrolled, transcripts)] == ["b.json"]
 
 
 @pytest.mark.parametrize(
@@ -332,4 +332,4 @@ def test_ingest_packet_meta_missing_keys_is_failure_not_crash(conn, tmp_path):
 
 
 def test_index_rows_missing_indexes_is_empty(tmp_path):
-    assert extract_module._index_rows("A", tmp_path / "enrolled.jsonl", tmp_path / "t.jsonl") == []
+    assert extract_module.index_rows("A", tmp_path / "enrolled.jsonl", tmp_path / "t.jsonl") == []

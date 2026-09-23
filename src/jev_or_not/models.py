@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 # An extracted or hand-annotated ruling's verdict; shared by PilotReference,
 # Ruling, and extract.ExtractedRuling so they cannot drift.
@@ -89,6 +89,19 @@ class PilotReference(Record):
         if start is not None and v <= start:
             raise ValueError("ruling_end_s must be greater than ruling_start_s")
         return v
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("subject is required")
+        return v
+
+    @model_validator(mode="after")
+    def _strength_matches_verdict(self) -> PilotReference:
+        if (self.verdict == "no_ruling") != (self.verdict_strength is None):
+            raise ValueError("verdict_strength is required unless the verdict is no_ruling")
+        return self
 
 
 class Episode(Record):

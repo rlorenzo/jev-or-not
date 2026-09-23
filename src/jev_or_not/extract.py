@@ -11,7 +11,7 @@ call. So this module only does two things:
   rulings to ``data/verdicts.jsonl`` via the shared ledger.
 
 No network, no ``anthropic`` dependency. Until ``jev-or-not enroll`` has
-written ``data/enrolled_index.jsonl``, ``_index_rows`` falls back to
+written ``data/enrolled_index.jsonl``, ``index_rows`` falls back to
 ``data/transcript_index.jsonl`` and treats a missing ``speaker`` field as
 ``"UNKNOWN"``.
 """
@@ -160,7 +160,7 @@ def _prompt_version_and_text(path: Path = PROMPT_PATH) -> tuple[str, str]:
     raise ValueError(f"{path}: missing 'prompt_version: <id>' line")
 
 
-def _index_rows(
+def index_rows(
     candidate: str,
     enrolled_index_path: Path = ENROLLED_INDEX_PATH,
     transcript_index_path: Path = TRANSCRIPT_INDEX_PATH,
@@ -216,7 +216,7 @@ def prepare(
 
     prompt_version, prompt_text = _prompt_version_and_text(prompt_path)
     episodes_by_id = {e.episode_id: e for e in read_episodes(episodes_path)}
-    rows = _index_rows(candidate, enrolled_index_path, transcript_index_path)
+    rows = index_rows(candidate, enrolled_index_path, transcript_index_path)
     if episodes_arg:
         numbers = set(parse_episode_numbers(episodes_arg))
         wanted_ids = {e.episode_id for e in episodes_by_id.values() if e.episode in numbers}
