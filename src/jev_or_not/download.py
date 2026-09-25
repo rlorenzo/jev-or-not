@@ -41,11 +41,27 @@ MAX_ATTEMPTS = 3
 BACKOFF_S = 1.0
 POLITE_PAUSE_RANGE_S = (1.0, 2.0)
 DURATION_MISMATCH_RATIO = 0.05
+# 500 MiB: the largest episode in data/audio_manifest.jsonl today is ~13 MB,
+# so this gives ~35x headroom while still bounding a hostile/misbehaving host.
+MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024
 _AFINFO_DURATION_RE = re.compile(r"estimated duration:\s*([0-9.]+)", re.IGNORECASE)
 
 
 class HTMLBodyError(Exception):
     """Raised when the response body looks like an HTML page, not audio."""
+
+
+class DownloadTooLargeError(Exception):
+    """Raised when the response body exceeds MAX_DOWNLOAD_BYTES."""
+
+
+class UnexpectedPartialContentError(Exception):
+    """Raised when a 206 answers a request that sent no Range header.
+
+    Such a response is only a slice of the file, not the whole body; treating
+    it as a complete download would silently record a truncated file as a
+    success.
+    """
 
 
 def episode_audio_path(episode: Episode, audio_dir: Path = AUDIO_DIR) -> Path:
@@ -83,6 +99,11 @@ def _fetch_to_file(client: httpx.Client, url: str, path: Path) -> tuple[str, str
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.stat().st_size if path.exists() else 0
+    if existing > MAX_DOWNLOAD_BYTES:
+        # An oversized partial from an earlier, cap-less run: a 416 with a
+        # matching total would otherwise bless it as complete. Start over.
+        path.unlink()
+        existing = 0
     headers = {"Range": f"bytes={existing}-"} if existing else {}
     mode = "ab" if existing else "wb"
 
@@ -105,7 +126,38 @@ def _fetch_to_file(client: httpx.Client, url: str, path: Path) -> tuple[str, str
         # one, where appending the body would silently corrupt the audio file.
         if content_type.split(";")[0].strip().lower() == "text/html":
             raise HTMLBodyError(f"HTML body returned for {url} (content-type={content_type!r})")
+        already = existing if mode == "ab" else 0
+        if resp.status_code == 206:
+            if mode == "wb":
+                # We sent no Range header, so the server had no basis to
+                # answer with a slice; don't accept it as a complete file.
+                raise UnexpectedPartialContentError(
+                    f"{url}: got 206 Partial Content for an un-ranged request"
+                )
+            content_range = resp.headers.get("content-range", "")
+            # Content-Length is only the slice; Content-Range carries the total.
+            total = content_range.rpartition("/")[2].strip()
+            if total.isdigit() and int(total) > MAX_DOWNLOAD_BYTES:
+                raise DownloadTooLargeError(
+                    f"{url}: Content-Range total {total} exceeds cap of {MAX_DOWNLOAD_BYTES} bytes"
+                )
+            # mode == "ab" here (the "wb" case already raised above). The
+            # server must honor our requested resume offset; otherwise
+            # appending would splice the wrong bytes into the file. A
+            # missing/mismatched start means it didn't, so restart clean
+            # (the retry sends no Range and can't hit this branch again).
+            range_start = content_range.removeprefix("bytes ").partition("-")[0].strip()
+            if not (range_start.isdigit() and int(range_start) == existing):
+                path.unlink(missing_ok=True)
+                return _fetch_to_file(client, url, path)
+        content_length = resp.headers.get("content-length", "")
+        if content_length.isdigit() and already + int(content_length) > MAX_DOWNLOAD_BYTES:
+            raise DownloadTooLargeError(
+                f"{url}: Content-Length {content_length} (+{already} resumed) "
+                f"exceeds cap of {MAX_DOWNLOAD_BYTES} bytes"
+            )
         checked_html = mode != "wb"  # only the first bytes of a fresh file are meaningful
+        written = already
         with open(path, mode) as f:
             for chunk in resp.iter_bytes():
                 if not checked_html:
@@ -114,6 +166,11 @@ def _fetch_to_file(client: httpx.Client, url: str, path: Path) -> tuple[str, str
                             f"HTML body returned for {url} (content-type={content_type!r})"
                         )
                     checked_html = True
+                written += len(chunk)
+                if written > MAX_DOWNLOAD_BYTES:
+                    raise DownloadTooLargeError(
+                        f"{url}: body exceeded cap of {MAX_DOWNLOAD_BYTES} bytes"
+                    )
                 f.write(chunk)
         resolved_url = str(resp.url)
     return resolved_url, content_type
@@ -165,6 +222,28 @@ def download_one(
             return {
                 "status": "failed",
                 "reason": "html_body",
+                "error": str(exc),
+                "episode_id": episode.episode_id,
+                "episode_label": episode.episode_label,
+            }
+        except DownloadTooLargeError as exc:
+            path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+            fail(conn, task_id, str(exc))
+            return {
+                "status": "failed",
+                "reason": "too_large",
+                "error": str(exc),
+                "episode_id": episode.episode_id,
+                "episode_label": episode.episode_label,
+            }
+        except UnexpectedPartialContentError as exc:
+            path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+            fail(conn, task_id, str(exc))
+            return {
+                "status": "failed",
+                "reason": "unexpected_partial_content",
                 "error": str(exc),
                 "episode_id": episode.episode_id,
                 "episode_label": episode.episode_label,
