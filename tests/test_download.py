@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from jev_or_not.download import download_one
+from jev_or_not.download import MAX_DOWNLOAD_BYTES, download_one
 from jev_or_not.ledger import open_ledger
 from jev_or_not.models import Episode
 
@@ -94,7 +94,12 @@ def test_resume_from_partial_via_range(_mock_duration, conn, tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["range"] == f"bytes={len(partial)}-"
         return httpx.Response(
-            206, headers={"Content-Type": "audio/mpeg"}, content=full[len(partial) :]
+            206,
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Content-Range": f"bytes {len(partial)}-{len(full) - 1}/{len(full)}",
+            },
+            content=full[len(partial) :],
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -104,6 +109,55 @@ def test_resume_from_partial_via_range(_mock_duration, conn, tmp_path):
 
     assert result["status"] == "success"
     assert (tmp_path / "999.mp3").read_bytes() == full
+
+
+@patch("jev_or_not.download.measure_duration_s", return_value=None)
+def test_resume_with_mismatched_content_range_start_restarts_clean(_mock_duration, conn, tmp_path):
+    """A 206 that doesn't honor the requested resume offset must not be appended blindly."""
+    full = b"FAKEMP3DATA" * 100
+    partial = full[:500]
+    (tmp_path / "999.mp3").write_bytes(partial)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers.get("range"))
+        if "range" in request.headers:
+            # Server ignores the resume offset and sends an unrelated slice.
+            return httpx.Response(
+                206,
+                headers={"Content-Type": "audio/mpeg", "Content-Range": "bytes 0-99/1100"},
+                content=full[:100],
+            )
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"}, content=full)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "success"
+    assert calls == [f"bytes={len(partial)}-", None]  # mismatched 206, then a clean un-ranged GET
+    assert (tmp_path / "999.mp3").read_bytes() == full
+
+
+def test_unprompted_206_on_fresh_download_is_rejected(conn, tmp_path):
+    """A 206 answering a request with no Range header can only be a slice;
+    accepting it would silently record a truncated file as a success."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "range" not in {k.lower() for k in request.headers}
+        return httpx.Response(
+            206,
+            headers={"Content-Type": "audio/mpeg", "Content-Range": "bytes 0-9/100"},
+            content=b"x" * 10,
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "unexpected_partial_content"
+    assert not (tmp_path / "999.mp3").exists()
 
 
 def test_html_body_on_resume_is_failure(conn, tmp_path):
@@ -163,6 +217,93 @@ def test_416_with_size_mismatch_restarts_clean(_mock_duration, conn, tmp_path):
     assert result["status"] == "success"
     assert calls == ["bytes=1000-", None]  # ranged 416, then a clean un-ranged GET
     assert (tmp_path / "999.mp3").read_bytes() == full
+
+
+@patch("jev_or_not.download.MAX_DOWNLOAD_BYTES", 1000)
+def test_content_range_total_over_cap_on_206_is_rejected(conn, tmp_path):
+    """A 206 whose Content-Range total exceeds the cap must be rejected even
+    though its own Content-Length (just the slice) is small."""
+    partial = tmp_path / "999.mp3"
+    partial.write_bytes(b"x" * 100)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["range"] == "bytes=100-"
+        return httpx.Response(
+            206,
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Content-Range": "bytes 100-199/2000",
+            },
+            content=b"x" * 100,
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "too_large"
+    assert "Content-Range total" in result["error"]
+    assert not partial.exists()
+
+
+def test_content_length_over_cap_is_rejected_early(conn, tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Content-Length": str(MAX_DOWNLOAD_BYTES + 1),
+            },
+            content=b"FAKEMP3DATA",
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "too_large"
+    assert not (tmp_path / "999.mp3").exists()
+
+
+@patch("jev_or_not.download.MAX_DOWNLOAD_BYTES", 1000)
+def test_streamed_body_over_cap_is_rejected(conn, tmp_path):
+    """No Content-Length (chunked/unknown size): the cap bites mid-stream."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # stream= keeps httpx from adding Content-Length, so only the
+        # mid-stream counter can trip.
+        return httpx.Response(
+            200, headers={"Content-Type": "audio/mpeg"}, stream=httpx.ByteStream(b"x" * 2000)
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "too_large"
+    assert "body exceeded cap" in result["error"]
+    assert not (tmp_path / "999.mp3").exists()
+
+
+@patch("jev_or_not.download.MAX_DOWNLOAD_BYTES", 1000)
+def test_oversized_partial_on_disk_is_discarded(conn, tmp_path):
+    """A leftover partial above the cap must not be blessed by a matching 416."""
+    partial = tmp_path / "999.mp3"
+    partial.write_bytes(b"x" * 1500)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "range" not in {k.lower() for k in request.headers}
+        return httpx.Response(200, headers={"Content-Type": "audio/mpeg"}, content=b"y" * 10)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = download_one(client, conn, _episode(), audio_dir=tmp_path)
+
+    assert result["status"] == "success"
+    assert partial.read_bytes() == b"y" * 10
 
 
 @patch("jev_or_not.download.measure_duration_s", return_value=123.0)
