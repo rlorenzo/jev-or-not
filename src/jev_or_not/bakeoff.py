@@ -25,6 +25,10 @@ from jev_or_not.review_pool import same_subject, subject_tokens
 
 MATCHES_PATH = Path("data/gold/pilot_matches.jsonl")
 SCORECARD_LINKS_PATH = Path("data/gold/pilot_scorecard_links.jsonl")
+# Rex's calls on proposed/unmatched rows: one JSON object per line with the
+# run key, extracted_ruling_id, reference_ruling_id (null = not a reference
+# ruling), decided_by, decided_at.
+MATCH_REVIEWS_PATH = Path("data/gold/pilot_match_reviews.jsonl")
 BAKEOFF_REPORT = Path("reports/transcriber-bakeoff.md")
 EXTRACTION_REPORT = Path("reports/extraction-pilot.md")
 REVIEW_DIR = Path("local/review")
@@ -153,6 +157,8 @@ def alias_matches(
         here = by_episode.get(row["episode_id"], [])
         exact = [rid for rid in here if tokens in aliases[rid]]
         proposed = [rid for rid in here if any(same_subject(tokens, a) for a in aliases[rid])]
+        if not proposed:  # a looser hint: any shared content word
+            proposed = [rid for rid in here if any(tokens & a for a in aliases[rid])]
         if len(exact) == 1:
             matched, method = exact[0], "alias"
         elif len(proposed) == 1:
@@ -600,6 +606,7 @@ def run(
     *,
     matches_path: Path = MATCHES_PATH,
     links_path: Path = SCORECARD_LINKS_PATH,
+    match_reviews_path: Path = MATCH_REVIEWS_PATH,
     bakeoff_path: Path = BAKEOFF_REPORT,
     extraction_path: Path = EXTRACTION_REPORT,
     review_dir: Path = REVIEW_DIR,
@@ -622,9 +629,16 @@ def run(
     if new_rows:
         frozen += alias_matches(new_rows, frozen, reference, superseded)
         _write_jsonl(matches_path, frozen)
-    scored = [
-        {**m, "reference_ruling_id": resolve(m["reference_ruling_id"], superseded)} for m in frozen
-    ]
+    reviews = {
+        (*_run_key(r), r["extracted_ruling_id"]): r
+        for r in (read_jsonl(match_reviews_path) if match_reviews_path.exists() else [])
+    }
+    scored = []
+    for m in frozen:
+        review = reviews.get((*_run_key(m), m["extracted_ruling_id"]))
+        if review and m["method"] in ("proposed", "unmatched"):
+            m = {**m, "reference_ruling_id": review["reference_ruling_id"], "method": "reviewed"}
+        scored.append({**m, "reference_ruling_id": resolve(m["reference_ruling_id"], superseded)})
     links = [
         {**lk, "reference_ruling_id": resolve(lk["reference_ruling_id"], superseded)}
         for lk in read_jsonl(links_path)

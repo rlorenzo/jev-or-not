@@ -4,6 +4,8 @@ Reference: `data/gold/pilot_reference.jsonl` v1.0.0, 30 live rulings, sha256 `10
 
 > The reference is **pooled**: it holds only rulings that a run, the scorecard, or Rex found while reviewing. Recall is measured against that inventory, not against every ruling in the audio, so it can overstate true recall.
 
+> Runs after `extract-v1` used a prompt revised *after* seeing this pilot's errors, and are scored on the same pilot. Their numbers are optimistic until confirmed on episodes outside the pilot.
+
 ## Gates (extractor: Sonnet)
 
 | Candidate / prompt | Verdict agreement | Subject recall | Raw speaker attribution | Gates |
@@ -11,6 +13,7 @@ Reference: `data/gold/pilot_reference.jsonl` v1.0.0, 30 live rulings, sha256 `10
 | A / extract-v1 | 15/21 (71.4%) | 21/30 (70.0%) | 26/30 (86.7%) | FAIL / FAIL / FAIL |
 | A2 / extract-v1 | 18/23 (78.3%) | 23/30 (76.7%) | 27/30 (90.0%) | FAIL / FAIL / FAIL |
 | B / extract-v1 | 22/28 (78.6%) | 28/30 (93.3%) | 27/30 (90.0%) | FAIL / FAIL / FAIL |
+| B / extract-v2 | 13/17 (76.5%) | 17/30 (56.7%) | 27/30 (90.0%) | FAIL / FAIL / FAIL |
 
 Gates are 95% each (PLAN.md Phase 2). Verdict agreement is over matched binary reference rulings; an `ambiguous` or `no_ruling` call counts as a disagreement.
 
@@ -43,5 +46,6 @@ Ruling spans whose dominant enrolled speaker (by word time) is not the reference
 - **A / extract-v1:** missed 2 ATM (no), 298 a small retinue of orcs directly serving Saruman (yes), 300 Burger King's numbered-ticket ordering system (order, get a slip, wait for a number to be called) (yes), 300 a fancy, expensive tofu pop served instantly at a fancy cafe (no), 300 Starbucks and similar upscale cafes (e.g. a "frufu" cafe/bookshop serving scones) (no), 300 UK takeaway pre-made sandwiches (e.g. a Marks & Spencer boxed sandwich) (no), 300 pizza (yes), 300 Subway (yes), 350 canned "tomato sauce" (i.e. crushed or pureed tomatoes sold in a can) (no); wrong verdict 50 the squid/spider creatures in The Matrix (yes) -> ambiguous, 298 orcs (e.g. the Uruk-hai) (no) -> ambiguous, 298 Boba Fett (no) -> no_ruling, 300 Five Guys (yes) -> ambiguous, 300 Shake Shack (no) -> yes, 350 cheese sauce (as on mac and cheese) (yes) -> no_ruling; 2 unmatched extra rulings.
 - **A2 / extract-v1:** missed 2 ATM (no), 298 a small retinue of orcs directly serving Saruman (yes), 298 Boba Fett (no), 300 Burger King's numbered-ticket ordering system (order, get a slip, wait for a number to be called) (yes), 300 Starbucks and similar upscale cafes (e.g. a "frufu" cafe/bookshop serving scones) (no), 350 cheese sauce (as on mac and cheese) (yes), 350 canned "tomato sauce" (i.e. crushed or pureed tomatoes sold in a can) (no); wrong verdict 50 the squid/spider creatures in The Matrix (yes) -> no_ruling, 298 orcs (e.g. the Uruk-hai) (no) -> ambiguous, 300 Subway (yes) -> ambiguous, 300 Five Guys (yes) -> ambiguous, 300 Shake Shack (no) -> yes; 0 unmatched extra rulings.
 - **B / extract-v1:** missed 2 ATM (no), 350 traditional/broad sauces served on pasta (marinara, alfredo, pesto, pomodoro, cream-based, etc.) (yes); wrong verdict 50 the squid/spider creatures in The Matrix (yes) -> no_ruling, 298 a small retinue of orcs directly serving Saruman (yes) -> ambiguous, 298 Boba Fett (no) -> no_ruling, 300 Burger King's numbered-ticket ordering system (order, get a slip, wait for a number to be called) (yes) -> no_ruling, 300 Subway (yes) -> ambiguous, 300 Five Guys (yes) -> ambiguous; 0 unmatched extra rulings.
+- **B / extract-v2:** missed 2 ATM (no), 50 the squid/spider creatures in The Matrix (yes), 200 microscopic laser-actuated nano machines (no), 298 orcs (e.g. the Uruk-hai) (no), 298 a small retinue of orcs directly serving Saruman (yes), 300 Burger King's numbered-ticket ordering system (order, get a slip, wait for a number to be called) (yes), 300 a fancy, expensive tofu pop served instantly at a fancy cafe (no), 300 Starbucks and similar upscale cafes (e.g. a "frufu" cafe/bookshop serving scones) (no), 300 UK takeaway pre-made sandwiches (e.g. a Marks & Spencer boxed sandwich) (no), 345 ergonomics assistance backpack (no), 350 traditional/broad sauces served on pasta (marinara, alfredo, pesto, pomodoro, cream-based, etc.) (yes), 350 cheese sauce (as on mac and cheese) (yes), 350 canned "tomato sauce" (i.e. crushed or pureed tomatoes sold in a can) (no); wrong verdict 298 Boba Fett (no) -> no_ruling, 300 pizza (yes) -> ambiguous, 300 Subway (yes) -> ambiguous, 300 Five Guys (yes) -> ambiguous; 9 unmatched extra rulings.
 
 Review sheets: `local/review/{episode}-{candidate}.md` (local only).
