@@ -199,6 +199,25 @@ def _packet_dir(packets_dir: Path, label: str, candidate: str, model: str) -> Pa
     return packets_dir / f"{label}-{candidate}-{model}"
 
 
+def _retire_stale_output(out_dir: Path, packet_hash: str) -> None:
+    """Move aside an output.json written for a different packet.
+
+    A re-prepare with a new prompt or transcript rewrites packet.md in place;
+    the old output.json must not then be ingested as the answer to the new
+    packet. It is kept, renamed after the packet it answered.
+    """
+    output = out_dir / "output.json"
+    meta_path = out_dir / "packet.json"
+    if not output.exists():
+        return
+    try:
+        old_hash = json.loads(meta_path.read_text())["packet_hash"]
+    except OSError, ValueError, KeyError:
+        old_hash = "unknown"
+    if old_hash != packet_hash:
+        output.rename(out_dir / f"output.{old_hash[:12]}.json")
+
+
 def prepare(
     candidate: str,
     model: str,
@@ -232,7 +251,9 @@ def prepare(
         output_path = out_dir / "output.json"
 
         packet_md = build_packet(prompt_text, episode, candidate, model, transcript, output_path)
+        packet_hash = hashlib.sha256(packet_md.encode()).hexdigest()
         out_dir.mkdir(parents=True, exist_ok=True)
+        _retire_stale_output(out_dir, packet_hash)
         (out_dir / "packet.md").write_text(packet_md)
         write_json_atomic(
             out_dir / "packet.json",
@@ -242,7 +263,7 @@ def prepare(
                 "model": model,
                 "prompt_version": prompt_version,
                 "transcript_hash": row["hash"],
-                "packet_hash": hashlib.sha256(packet_md.encode()).hexdigest(),
+                "packet_hash": packet_hash,
                 "prepared_at": datetime.now(UTC).isoformat(),
             },
         )

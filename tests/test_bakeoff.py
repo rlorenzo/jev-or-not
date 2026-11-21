@@ -109,7 +109,15 @@ def test_pool_names_members_only_when_asked():
     assert not blind.keys() & {"members", "scorecard_refs"}
     (c,) = review_pool.pool(EP, 300, verdicts, scorecard, 1, with_members=True)
     run = "B|claude-sonnet-subagent"
-    assert c["members"] == [{"run": run, "ruling_id": f"{EP}#0", "verdict": "no"}]
+    assert c["members"] == [
+        {
+            "run": run,
+            "ruling_id": f"{EP}#0",
+            "verdict": "no",
+            "subject": "Mr. Roboto",
+            "prompt_version": None,
+        }
+    ]
     assert c["scorecard_refs"] == [{"ruling_ref": "sc-1", "label": "no"}]
 
 
@@ -123,3 +131,46 @@ def test_load_sealed_reference_refuses_edited_reference(tmp_path):
     FakeDesk.reference_path.write_text(json.dumps(ref(1)) + "\n")
     with pytest.raises(RuntimeError, match="no longer matches"):
         bakeoff.load_sealed_reference(FakeDesk())
+
+
+def test_resolve_follows_supersessions():
+    chain = {"a": "b", "b": "c"}
+    assert bakeoff.resolve("a", chain) == "c"
+    assert bakeoff.resolve("x", chain) == "x"
+    assert bakeoff.resolve(None, chain) is None
+
+
+def _new(subject: str) -> dict:
+    return {
+        "episode_id": EP,
+        "candidate": "B",
+        "model": "sonnet",
+        "prompt_version": "extract-v2",
+        "extracted_ruling_id": f"{EP}#0",
+        "subject": subject,
+        "extracted_verdict": "no",
+    }
+
+
+def test_alias_matches_uses_reviewed_phrasings_and_only_proposes_fuzzy():
+    reference = [{**ref(1), "subject": "Johnny Cab"}, {**ref(2), "subject": "a drone"}]
+    frozen = [{"subject": "the robotic taxi from Total Recall", "reference_ruling_id": "old"}]
+    superseded = {"old": f"{EP}#1"}  # the reviewed alias follows the supersession
+    rows = bakeoff.alias_matches(
+        [
+            _new("The Johnny Cab"),
+            _new("robotic taxi from Total Recall"),
+            _new("Johnny Cab taxi"),
+            _new("a toaster"),
+        ],
+        frozen,
+        reference,
+        superseded,
+    )
+    assert [(r["method"], r["reference_ruling_id"]) for r in rows] == [
+        ("alias", f"{EP}#1"),
+        ("alias", f"{EP}#1"),
+        ("proposed", None),
+        ("unmatched", None),
+    ]
+    assert rows[2]["proposed_ruling_id"] == f"{EP}#1"

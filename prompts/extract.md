@@ -1,5 +1,5 @@
 <!-- markdownlint-disable-next-line MD041 -->
-prompt_version: extract-v1
+prompt_version: extract-v2
 
 # Verdict extraction: Robot or Not?
 
@@ -21,20 +21,32 @@ the category.
   verdict; use it only as context for what was asked.
 - If John changes his mind mid-episode, record his *final* position as the
   verdict, and set `verdict_strength` to `"reversed_during_episode"`.
-- Use `"ambiguous"` only when John states an explicit conditional or
-  genuinely indeterminate judgment ("it depends on X"), not when he is just
-  hedging on a firm lean.
-- Use `"no_ruling"` when John declines to rule or the episode ends before he
-  reaches a judgment. Do not force a yes/no onto a subject he never decided.
+- **Prefer a yes/no verdict.** John usually lands somewhere even when he
+  grumbles, qualifies, or calls it a close call. If he states or clearly
+  accepts a lean ("I guess it's a robot", "fine, not a robot", "I'll allow
+  it", "probably yes"), record that lean as `"yes"` or `"no"` and set
+  `verdict_strength` to `"hedged"`. Hedging, reluctance, and caveats are
+  strength, not a different verdict.
+- A ruling can be delivered as agreement. If Jason (or a guest) states a
+  conclusion and John plainly assents ("Yeah", "Right", "Exactly") or builds
+  on it without objecting, that is John's ruling, attributed to John's
+  assenting line. If John only lets it pass in silence, it is not.
+- Use `"ambiguous"` only when John's *final* position is explicitly
+  conditional or indeterminate ("it depends on whether X", "could be either,
+  I can't say") and he never commits to a side. This should be rare.
+- Use `"no_ruling"` only when John explicitly declines to rule, defers the
+  question to a later episode, or the subject is mentioned without any lean
+  from him. Do not use it for a subject he discussed and leaned on.
 - `verdict_strength` is `"firm"` for a plain, undecorated ruling, `"hedged"`
-  for a ruling he immediately qualifies or expresses low confidence in, and
-  `null` when `verdict` is `"no_ruling"`.
+  for a ruling he qualifies or expresses low confidence in,
+  `"reversed_during_episode"` as above, and `null` when `verdict` is
+  `"no_ruling"`.
 - `subject` is the specific thing being judged (e.g. "a Roomba", "Johnny
   Cab"). `category` is the general concept it's judged against (e.g.
   "robot", "boat", "sauce", "video game").
 - `question_as_posed` is a short, neutral paraphrase of how the question was
   originally asked (by a listener or by Jason), before John's deliberation.
-- Up to 3 `evidence_quotes` per ruling, each a direct quote of under 15
+- Up to 3 `evidence_quotes` per ruling, each a direct quote of at most 30
   whitespace-delimited words from the transcript, with its start/end
   timestamps in seconds. Prefer the quote(s) that most directly state the
   verdict and John's reasoning. Zero quotes is acceptable if none is short

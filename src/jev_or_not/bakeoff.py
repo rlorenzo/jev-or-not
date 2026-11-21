@@ -21,8 +21,10 @@ from pathlib import Path
 
 from jev_or_not.annotate import Desk
 from jev_or_not.common import read_jsonl, write_lines_atomic
+from jev_or_not.review_pool import same_subject, subject_tokens
 
 MATCHES_PATH = Path("data/gold/pilot_matches.jsonl")
+SCORECARD_LINKS_PATH = Path("data/gold/pilot_scorecard_links.jsonl")
 BAKEOFF_REPORT = Path("reports/transcriber-bakeoff.md")
 EXTRACTION_REPORT = Path("reports/extraction-pilot.md")
 REVIEW_DIR = Path("local/review")
@@ -67,25 +69,34 @@ def _pct(num: int, den: int) -> str:
     return f"{num}/{den} ({num / den:.1%})" if den else "0/0 (unmeasured)"
 
 
-def _run(candidate: str, model: str) -> str:
-    return f"{candidate}|{model}"
-
-
 # ---- matching ------------------------------------------------------------
 
 
 def load_sealed_reference(desk: Desk) -> list[dict]:
-    """The reference rows, refusing anything but the sealed bytes."""
+    """The live reference rows (superseded ones dropped), refusing anything
+    but the sealed bytes."""
     seal = desk.seal()
     if seal is None:
         raise RuntimeError("the pilot reference is not sealed; seal it in the desk first")
     if _sha256(desk.reference_path) != seal["reference_sha256"]:
         raise RuntimeError("pilot_reference.jsonl no longer matches its seal")
-    return list(read_jsonl(desk.reference_path))
+    superseded = desk._superseded_ids()
+    return [r for r in read_jsonl(desk.reference_path) if r["ruling_id"] not in superseded]
 
 
-def match(desk: Desk) -> list[dict]:
-    """One row per extracted ruling: which reference ruling it was matched to."""
+def resolve(ruling_id: str | None, superseded: dict[str, str]) -> str | None:
+    """Follow supersessions to the live reference ruling."""
+    seen = set()
+    while ruling_id in superseded and ruling_id not in seen:
+        seen.add(ruling_id)
+        ruling_id = superseded[ruling_id]
+    return ruling_id
+
+
+def pooled_matches(desk: Desk) -> list[dict]:
+    """One row per extracted ruling in the reviewed pool, matched through
+    Rex's decision on its candidate. Run once, then frozen: later
+    extractions change the pool, so it is never recomputed."""
     rows = []
     for ep in desk.pilot():
         for c in desk.candidates(ep, with_members=True):
@@ -98,7 +109,9 @@ def match(desk: Desk) -> list[dict]:
                         "episode_id": ep["episode_id"],
                         "candidate": candidate,
                         "model": MODELS.get(model_id, model_id),
+                        "prompt_version": m["prompt_version"],
                         "extracted_ruling_id": m["ruling_id"],
+                        "subject": m["subject"],
                         "extracted_verdict": m["verdict"],
                         "pool_candidate_id": c["candidate_id"],
                         "decision": c["decision"],
@@ -106,8 +119,55 @@ def match(desk: Desk) -> list[dict]:
                         "method": "pooled_review",
                     }
                 )
-    rows.sort(key=lambda r: (r["episode_id"], r["candidate"], r["model"], r["extracted_ruling_id"]))
     return rows
+
+
+def _run_key(row: dict) -> tuple:
+    return row["episode_id"], row["candidate"], row["model"], row["prompt_version"]
+
+
+def alias_matches(
+    new_rows: list[dict], frozen: list[dict], reference: list[dict], superseded: dict[str, str]
+) -> list[dict]:
+    """Match rulings from a run that was not in the reviewed pool.
+
+    PLAN.md Phase 3: exact normalized names and reviewed aliases first. A
+    reviewed alias is any subject phrasing the pooled review already tied to
+    a reference ruling. Anything else gets at most a *proposed* match (same
+    subject by token overlap) that stays unmatched until Rex accepts it;
+    verdicts never take part.
+    """
+    aliases: dict[str, set[frozenset[str]]] = defaultdict(set)
+    for r in reference:
+        aliases[r["ruling_id"]].add(subject_tokens(r["subject"]))
+    for f in frozen:
+        if (rid := resolve(f["reference_ruling_id"], superseded)) and rid in aliases:
+            aliases[rid].add(subject_tokens(f["subject"]))
+    by_episode: dict[str, list[str]] = defaultdict(list)
+    for r in reference:
+        by_episode[r["episode_id"]].append(r["ruling_id"])
+
+    out = []
+    for row in new_rows:
+        tokens = subject_tokens(row["subject"])
+        here = by_episode.get(row["episode_id"], [])
+        exact = [rid for rid in here if tokens in aliases[rid]]
+        proposed = [rid for rid in here if any(same_subject(tokens, a) for a in aliases[rid])]
+        if len(exact) == 1:
+            matched, method = exact[0], "alias"
+        elif len(proposed) == 1:
+            matched, method = None, "proposed"
+        else:
+            matched, method = None, "unmatched"
+        out.append(
+            {
+                **row,
+                "reference_ruling_id": matched,
+                "proposed_ruling_id": proposed[0] if method == "proposed" else None,
+                "method": method,
+            }
+        )
+    return out
 
 
 def scorecard_links(desk: Desk) -> list[dict]:
@@ -119,8 +179,10 @@ def scorecard_links(desk: Desk) -> list[dict]:
             for sc in c["scorecard_refs"]:
                 links.append(
                     {
+                        "schema_version": 1,
                         "episode_id": ep["episode_id"],
                         "subject": c["subject"],
+                        "scorecard_ref": sc["ruling_ref"],
                         "scorecard_label": sc["label"],
                         "reference_ruling_id": matched,
                         "decision": c["decision"],
@@ -285,6 +347,19 @@ def _gate(num: int, den: int) -> str:
     return "pass" if num / den >= GATE else "FAIL"
 
 
+def _runs(reference: list[dict], matches: list[dict]) -> dict[tuple[str, str, str], dict]:
+    """Scores per (candidate, model, prompt_version), in a stable order."""
+    keys = sorted(
+        {(m["candidate"], m["model"], m["prompt_version"]) for m in matches},
+        key=lambda k: (CANDIDATES.index(k[0]), k[2], -ord(k[1][0])),
+    )
+    out = {}
+    for key in keys:
+        mine = [m for m in matches if (m["candidate"], m["model"], m["prompt_version"]) == key]
+        out[key] = score_run(reference, mine, {m["episode_id"] for m in mine})
+    return out
+
+
 def build_reports(
     reference: list[dict],
     matches: list[dict],
@@ -293,13 +368,14 @@ def build_reports(
     durations: dict[str, float],
     seal: dict,
 ) -> tuple[str, str]:
-    """(transcriber bake-off report, extraction pilot report) as markdown."""
+    """(transcriber bake-off report, extraction pilot report) as markdown.
+
+    ``matches`` must already point at live reference rulings (see ``resolve``).
+    """
     ref_by_id = {r["ruling_id"]: r for r in reference}
-    runs: dict[str, dict] = {}
-    for cand in CANDIDATES:
-        for model in MODELS.values():
-            mine = [m for m in matches if m["candidate"] == cand and m["model"] == model]
-            runs[_run(cand, model)] = score_run(reference, mine, {m["episode_id"] for m in mine})
+    runs = _runs(reference, matches)
+    first_prompt = min(k[2] for k in runs)
+    proposals = [m for m in matches if m["method"] in ("proposed", "unmatched")]
 
     def _order(ruling_id: str) -> tuple[int, str]:
         return int(_ep_label(ref_by_id[ruling_id]["episode_id"])), ruling_id
@@ -308,37 +384,49 @@ def build_reports(
         r = ref_by_id[ruling_id]
         return f"{_ep_label(r['episode_id'])} {r['subject']} ({r['verdict']})"
 
+    def name(key: tuple[str, str, str]) -> str:
+        return " / ".join(key)
+
     head = [
         f"Reference: `data/gold/pilot_reference.jsonl` v{seal['reference_version']}, "
-        f"{len(reference)} rulings, sha256 `{seal['reference_sha256'][:16]}…`. "
-        "Matches frozen in `data/gold/pilot_matches.jsonl` (pooled review, see "
-        "`jev_or_not.bakeoff`).",
+        f"{len(reference)} live rulings, sha256 `{seal['reference_sha256'][:16]}…`. "
+        "Matches frozen in `data/gold/pilot_matches.jsonl` (see `jev_or_not.bakeoff`).",
         "",
         "> The reference is **pooled**: it holds only rulings that a run, the scorecard, or "
         "Rex found while reviewing. Recall is measured against that inventory, not against "
         "every ruling in the audio, so it can overstate true recall.",
         "",
     ]
+    if any(k[2] != first_prompt for k in runs):
+        head += [
+            f"> Runs after `{first_prompt}` used a prompt revised *after* seeing this pilot's "
+            "errors, and are scored on the same pilot. Their numbers are optimistic until "
+            "confirmed on episodes outside the pilot.",
+            "",
+        ]
 
     # -- transcriber bake-off --
     bk = ["# Transcriber bake-off (Phase 2 pilot)", "", *head]
     bk += [
         "## Gates (extractor: Sonnet)",
         "",
-        "| Candidate | Verdict agreement | Subject recall | Raw speaker attribution | Gates |",
+        "| Candidate / prompt | Verdict agreement | Subject recall | Raw speaker attribution "
+        "| Gates |",
         "| --- | --- | --- | --- | --- |",
     ]
     attribution = {c: _attribution(reference, transcripts[c]) for c in CANDIDATES}
-    for c in CANDIDATES:
-        s = runs[_run(c, "sonnet")]
-        ok, _ = attribution[c]
+    sonnet_runs = [k for k in runs if k[1] == "sonnet"]
+    for key in sonnet_runs:
+        s = runs[key]
+        ok, _ = attribution[key[0]]
         gates = [
             _gate(s["agree"], s["matched_binary"]),
             _gate(s["found"], s["reference"]),
             _gate(ok, len(reference)),
         ]
         bk.append(
-            f"| {c} | {_pct(s['agree'], s['matched_binary'])} | {_pct(s['found'], s['reference'])} "
+            f"| {key[0]} / {key[2]} | {_pct(s['agree'], s['matched_binary'])} "
+            f"| {_pct(s['found'], s['reference'])} "
             f"| {_pct(ok, len(reference))} | {' / '.join(gates)} |"
         )
     bk += [
@@ -375,17 +463,13 @@ def build_reports(
     for c in CANDIDATES:
         wall, audio = _speed(transcripts[c], durations)
         bk.append(f"| {c} | {wall / 60:.1f} min | {audio / 60:.1f} min | {wall / audio:.2f} |")
-    bk += [
-        "",
-        "## Per-candidate detail (Sonnet)",
-        "",
-    ]
-    for c in CANDIDATES:
-        s = runs[_run(c, "sonnet")]
+    bk += ["", "## Per-run detail (Sonnet)", ""]
+    for key in sonnet_runs:
+        s = runs[key]
         missed = ", ".join(label(x) for x in s["missed"]) or "none"
         wrong = ", ".join(f"{label(x)} -> {v}" for x, v in s["wrong"]) or "none"
         bk.append(
-            f"- **{c}:** missed {missed}; wrong verdict {wrong}; "
+            f"- **{key[0]} / {key[2]}:** missed {missed}; wrong verdict {wrong}; "
             f"{s['extras']} unmatched extra rulings."
         )
     bk += ["", "Review sheets: `local/review/{episode}-{candidate}.md` (local only).", ""]
@@ -397,16 +481,17 @@ def build_reports(
         "| ambiguous / no_ruling | Unmatched extras |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for run, s in runs.items():
+    for key, s in runs.items():
         ex.append(
-            f"| {run.replace('|', ' / ')} | {s['episodes']} | {s['rows']} "
+            f"| {name(key)} | {s['episodes']} | {s['rows']} "
             f"| {_pct(s['agree'], s['matched_binary'])} | {_pct(s['agree'], s['binary'])} "
             f"| {_pct(s['found'], s['reference'])} | {s['ambiguous']} / {s['no_ruling']} "
             f"| {s['extras']} |"
         )
-    ex += ["", "## Model choice per transcriber", ""]
-    for c in CANDIDATES:
-        ex.append(f"- **{c}:** {model_choice(runs[_run(c, 'sonnet')], runs[_run(c, 'haiku')])}")
+    pairs = [(k, (k[0], "haiku", k[2])) for k in sonnet_runs if (k[0], "haiku", k[2]) in runs]
+    ex += ["", "## Model choice per transcriber (same prompt)", ""]
+    for sk, hk in pairs:
+        ex.append(f"- **{sk[0]} / {sk[2]}:** {model_choice(runs[sk], runs[hk])}")
     ex += [
         "",
         f"Rule: Sonnet unless Haiku is within {HAIKU_MARGIN:.0%} on both verdict agreement and "
@@ -417,22 +502,35 @@ def build_reports(
         "",
     ]
     any_dis = False
-    for c in CANDIDATES:
-        sv, hv = runs[_run(c, "sonnet")]["verdict_by_ref"], runs[_run(c, "haiku")]["verdict_by_ref"]
+    for sk, hk in pairs:
+        sv, hv = runs[sk]["verdict_by_ref"], runs[hk]["verdict_by_ref"]
         for rid in sorted(set(sv) | set(hv), key=_order):
             if sv.get(rid) != hv.get(rid):
                 any_dis = True
                 ex.append(
-                    f"- {c}: {label(rid)}: sonnet {sv.get(rid, 'missed')}, "
+                    f"- {sk[0]} / {sk[2]}: {label(rid)}: sonnet {sv.get(rid, 'missed')}, "
                     f"haiku {hv.get(rid, 'missed')}"
                 )
     if not any_dis:
         ex.append("- none")
+    if proposals:
+        ex += [
+            "",
+            "## Unconfirmed matches (scored as unmatched until accepted)",
+            "",
+        ]
+        for m in proposals:
+            to = label(m["proposed_ruling_id"]) if m.get("proposed_ruling_id") else "nothing"
+            ex.append(
+                f"- {_ep_label(m['episode_id'])} {m['candidate']} / {m['model']} / "
+                f'{m["prompt_version"]} `{m["extracted_ruling_id"]}` "{m["subject"]}" '
+                f"({m['extracted_verdict']}): proposed {to}"
+            )
     ex += ["", "## Scorecard vs reference", ""]
     any_sc = False
     for link in links:
         rid = link["reference_ruling_id"]
-        ref_v = ref_by_id[rid]["verdict"] if rid else None
+        ref_v = ref_by_id[rid]["verdict"] if rid in ref_by_id else None
         if ref_v != link["scorecard_label"]:
             any_sc = True
             where = (
@@ -469,10 +567,39 @@ def _load_transcripts(desk: Desk, enrolled_dir: Path) -> dict[str, dict[str, dic
     return out
 
 
+def _verdict_rows(desk: Desk) -> list[dict]:
+    """Current data/verdicts.jsonl rows in match-row shape."""
+    by_hash = desk._candidate_by_hash()
+    pilot_ids = {ep["episode_id"] for ep in desk.pilot()}
+    rows = []
+    for v in read_jsonl(desk.verdicts_path):
+        if v["episode_id"] not in pilot_ids:
+            continue
+        rows.append(
+            {
+                "schema_version": 1,
+                "episode_id": v["episode_id"],
+                "candidate": by_hash.get(v["transcript_hash"], "?"),
+                "model": MODELS.get(v["extractor_model"], v["extractor_model"]),
+                "prompt_version": v["prompt_version"],
+                "extracted_ruling_id": v["ruling_id"],
+                "subject": v["subject"],
+                "extracted_verdict": v["verdict"],
+            }
+        )
+    return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    rows = sorted(rows, key=lambda r: json.dumps(r, sort_keys=True))
+    write_lines_atomic(path, (json.dumps(r, sort_keys=True) for r in rows))
+
+
 def run(
     desk: Desk | None = None,
     *,
     matches_path: Path = MATCHES_PATH,
+    links_path: Path = SCORECARD_LINKS_PATH,
     bakeoff_path: Path = BAKEOFF_REPORT,
     extraction_path: Path = EXTRACTION_REPORT,
     review_dir: Path = REVIEW_DIR,
@@ -480,13 +607,32 @@ def run(
 ) -> dict:
     desk = desk or Desk()
     reference = load_sealed_reference(desk)
-    matches = match(desk)
-    write_lines_atomic(matches_path, (json.dumps(m, sort_keys=True) for m in matches))
+    superseded = desk._superseded_ids()
+    # The pooled matches and scorecard links are taken once, from the pool
+    # Rex reviewed, and never recomputed: new extractions reshape the pool.
+    if not matches_path.exists():
+        _write_jsonl(matches_path, pooled_matches(desk))
+    if not links_path.exists():
+        _write_jsonl(links_path, scorecard_links(desk))
     frozen = list(read_jsonl(matches_path))
+    known = {(*_run_key(m), m["extracted_ruling_id"]) for m in frozen}
+    new_rows = [
+        r for r in _verdict_rows(desk) if (*_run_key(r), r["extracted_ruling_id"]) not in known
+    ]
+    if new_rows:
+        frozen += alias_matches(new_rows, frozen, reference, superseded)
+        _write_jsonl(matches_path, frozen)
+    scored = [
+        {**m, "reference_ruling_id": resolve(m["reference_ruling_id"], superseded)} for m in frozen
+    ]
+    links = [
+        {**lk, "reference_ruling_id": resolve(lk["reference_ruling_id"], superseded)}
+        for lk in read_jsonl(links_path)
+    ]
     transcripts = _load_transcripts(desk, enrolled_dir)
     durations = {str(ep["episode"]): float(ep["duration_s"]) for ep in desk.pilot()}
     bakeoff, extraction = build_reports(
-        reference, frozen, scorecard_links(desk), transcripts, durations, desk.seal()
+        reference, scored, links, transcripts, durations, desk.seal()
     )
     for path, text in ((bakeoff_path, bakeoff), (extraction_path, extraction)):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -499,8 +645,10 @@ def run(
             (review_dir / f"{ep}-{c}.md").write_text(review_sheet(t, rulings, c))
             sheets += 1
     return {
-        "matches": len(frozen),
-        "matched": sum(1 for m in frozen if m["reference_ruling_id"]),
+        "matches": len(scored),
+        "matched": sum(1 for m in scored if m["reference_ruling_id"]),
+        "new": len(new_rows),
+        "unconfirmed": sum(1 for m in scored if m["method"] in ("proposed", "unmatched")),
         "sheets": sheets,
         "bakeoff": str(bakeoff_path),
         "extraction": str(extraction_path),

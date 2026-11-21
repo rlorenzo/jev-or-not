@@ -41,7 +41,7 @@ def subject_tokens(subject: str) -> frozenset[str]:
     return kept or frozenset(words)
 
 
-def _same_subject(a: frozenset[str], b: frozenset[str]) -> bool:
+def same_subject(a: frozenset[str], b: frozenset[str]) -> bool:
     if not a or not b:
         return False
     if a <= b or b <= a:
@@ -63,7 +63,7 @@ def _same_moment(a: list[float], b: list[float]) -> bool:
 
 def _belongs(tokens: frozenset[str], starts: list[float], group: dict) -> bool:
     for t, st in zip(group["tokens"], group["starts"], strict=True):
-        if _same_subject(tokens, t):
+        if same_subject(tokens, t):
             return True
         if tokens & t and _same_moment(starts, st):
             return True
@@ -168,7 +168,13 @@ def pool(
         )
         if with_members:
             candidates[-1]["members"] = [
-                {"run": m["run"], "ruling_id": m["ruling_id"], "verdict": m["verdict"]}
+                {
+                    "run": m["run"],
+                    "ruling_id": m["ruling_id"],
+                    "verdict": m["verdict"],
+                    "subject": m["subject"],
+                    "prompt_version": m.get("prompt_version"),
+                }
                 for m in members
             ]
             candidates[-1]["scorecard_refs"] = [

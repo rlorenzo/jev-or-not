@@ -132,6 +132,28 @@ def test_prepare_renders_speakers_and_writes_packet_json(tmp_path):
     assert packet_meta["transcript_hash"] == "abc123"
     assert packet_meta["packet_hash"] == hashlib.sha256(packet_md.encode()).hexdigest()
 
+    def again():
+        extract_module.prepare(
+            "B",
+            "sonnet",
+            packets_dir=packets_dir,
+            prompt_path=prompt_path,
+            enrolled_index_path=tmp_path / "no_enrolled_index.jsonl",
+            transcript_index_path=index_path,
+            episodes_path=tmp_path / "episodes.jsonl",
+        )
+
+    # re-preparing the same packet keeps its answer
+    output_path.write_text("[]")
+    again()
+    assert output_path.read_text() == "[]"
+    # a new prompt makes the old answer stale: moved aside, not re-ingested
+    prompt_path.write_text("prompt_version: extract-v2\n\nExtract every ruling.\n")
+    again()
+    assert not output_path.exists()
+    stale = packets_dir / "6-B-sonnet" / f"output.{packet_meta['packet_hash'][:12]}.json"
+    assert stale.read_text() == "[]"
+
 
 def _packet(tmp_path, output: list[dict] | None, **packet_meta_overrides):
     packet_dir = tmp_path / "6-B-sonnet"
