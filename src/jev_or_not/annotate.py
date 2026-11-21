@@ -438,8 +438,14 @@ class Desk:
         scorecard = list(read_jsonl(self.scorecard_path)) if self.scorecard_path.exists() else []
         return _PoolSources(by_episode, len(runs), scorecard, self._review_log())
 
-    def candidates(self, ep: dict, sources: _PoolSources | None = None) -> list[dict]:
-        """This episode's pooled candidates with Rex's decision merged in."""
+    def candidates(
+        self, ep: dict, sources: _PoolSources | None = None, *, with_members: bool = False
+    ) -> list[dict]:
+        """This episode's pooled candidates with Rex's decision merged in.
+
+        ``with_members`` names the runs behind each candidate; only scoring
+        (``jev_or_not.bakeoff``) asks for it, never the review UI.
+        """
         by_episode, runs_total, all_scorecard, review_log = sources or self._pool_sources()
         scorecard = [
             r
@@ -452,6 +458,7 @@ class Desk:
             by_episode.get(ep["episode_id"], []),
             scorecard,
             runs_total,
+            with_members=with_members,
         )
         decided = {
             r["candidate_id"]: r

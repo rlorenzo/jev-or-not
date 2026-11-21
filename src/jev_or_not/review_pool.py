@@ -87,12 +87,18 @@ def pool(
     verdicts: list[dict],
     scorecard: list[dict],
     runs_total: int,
+    *,
+    with_members: bool = False,
 ) -> list[dict]:
     """Candidates for one episode, in audio order (scorecard-only last).
 
     ``verdicts`` are this episode's ``data/verdicts.jsonl`` rows, each with an
     added ``run`` key naming its (candidate, model) run; ``scorecard`` are
     its ``scorecard_verified`` rulings.
+
+    ``with_members`` adds which run's rulings and which scorecard rows landed
+    in each candidate, for scoring after the reference is sealed. It names
+    runs, so the review desk never asks for it.
     """
     groups: list[dict] = []
 
@@ -160,5 +166,13 @@ def pool(
                 "on_scorecard": bool(g["scorecard"]),
             }
         )
+        if with_members:
+            candidates[-1]["members"] = [
+                {"run": m["run"], "ruling_id": m["ruling_id"], "verdict": m["verdict"]}
+                for m in members
+            ]
+            candidates[-1]["scorecard_refs"] = [
+                {"ruling_ref": sc["ruling_ref"], "label": sc["label"]} for sc in g["scorecard"]
+            ]
     candidates.sort(key=lambda c: (c["span"] is None, c["span"][0] if c["span"] else 0))
     return candidates

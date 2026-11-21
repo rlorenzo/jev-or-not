@@ -461,6 +461,8 @@ def test_review_approve_reject_undo_and_close(desk):
     _seed_verdicts(desk)
     (roboto,) = desk.session(1)["candidates"]  # extraction and scorecard merged
     assert roboto["found_by"] == 1 and roboto["on_scorecard"]
+    # the review is blind: nothing naming a run or a scorecard label
+    assert not roboto.keys() & {"members", "scorecard_refs"}
 
     with pytest.raises(DeskError, match="still to review"):
         desk.close_session(1)

@@ -3,6 +3,7 @@ import webbrowser
 import typer
 
 from jev_or_not import annotate as annotate_module
+from jev_or_not import bakeoff as bakeoff_module
 from jev_or_not import catalog as catalog_module
 from jev_or_not import download as download_module
 from jev_or_not import enroll as enroll_module
@@ -203,6 +204,18 @@ def annotate_cmd(
         typer.echo("stopped")
     finally:
         server.server_close()
+
+
+@app.command("score")
+def score_cmd() -> None:
+    """Phase 2/3: score transcribers and extractors against the sealed pilot reference."""
+    summary = bakeoff_module.run()
+    typer.echo(
+        f"score: {summary['matched']}/{summary['matches']} extracted rulings matched; "
+        f"{summary['sheets']} review sheets in local/review/"
+    )
+    typer.echo(f"  {summary['bakeoff']}")
+    typer.echo(f"  {summary['extraction']}")
 
 
 for _name in (
